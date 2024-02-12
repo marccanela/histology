@@ -18,7 +18,7 @@ from scipy import ndimage as ndi
 import os
 from matplotlib.patches import Polygon
 
-directory = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2023-10 - TRAP2/Microscope TRAP2/Males/male_8/'
+directory = '//folder/becell/Macro tests/List of images/ROIs to analyze/'
 ratio = 1.55 # px/µm
 
 def split_layers(image):
@@ -50,34 +50,24 @@ def draw_ROI(layer_data, tag):
     else:
         return polygon_coords[-1]
 
+def calculate_elbow(hist, bins):
+    peaks, _ = find_peaks(hist)
+    closest_peak_index = np.argmax(hist[peaks])
+        
+    # Create a subset of histogram and bins values between the identified peak and the end
+    subset_hist = hist[peaks[closest_peak_index]:]
+    subset_bins = bins[peaks[closest_peak_index]:-1]
+        
+    # Find the elbow using KneeLocator on the subset
+    knee = KneeLocator(subset_bins, subset_hist, curve='convex', direction='decreasing')
+    elbow_value = knee.elbow
+    return elbow_value
+
 def background_threshold(blurred_normalized):
-        hist, bins = np.histogram(blurred_normalized[blurred_normalized != 0], bins=64, range=(1, 256)) 
-    
-        # Identify peak values closest to 255 and 255
-        peaks, _ = find_peaks(hist)
-        closest_peak_index = np.argmax(hist[peaks])
+    hist, bins = np.histogram(blurred_normalized[blurred_normalized != 0], bins=64, range=(1, 256)) 
+    elbow_value = calculate_elbow(hist, bins)
         
-        # Create a subset of histogram and bins values between the identified peak and 255
-        subset_hist = hist[peaks[closest_peak_index]:]
-        subset_bins = bins[peaks[closest_peak_index]:-1]
-        
-        # Find the elbow using KneeLocator on the subset
-        knee = KneeLocator(subset_bins, subset_hist, curve='convex', direction='decreasing')
-        elbow_value = knee.elbow
-        
-        # Visualize the histogram and the identified peaks
-        # plt.figure()
-        # plt.plot(bins[:-1], hist)
-        # plt.plot(bins[peaks], hist[peaks], 'ro')
-        # plt.axvline(x=closest_peak_value, color='g', linestyle='--', label=f'Closest Peak to 255: {closest_peak_value:.2f}')
-        # plt.axvline(x=elbow_value, color='b', linestyle='--', label=f'Elbow: {elbow_value:.2f}')
-        # plt.title('Histogram with Identified Peaks and Elbow')
-        # plt.xlabel('Pixel Value')
-        # plt.ylabel('Frequency')
-        # plt.legend()
-        # plt.show()
-        
-        return elbow_value
+    return elbow_value
 
 def normalize_array(arr):
     min_val = np.min(arr)
@@ -95,7 +85,7 @@ def image_to_binary(image, tag):
             break
     
     # Apply the defined ROI
-    cfos = layers['layer_1']  
+    cfos = layers['layer_1']  # Select layer_0, layer_1, layer_2, etc.
     mask = np.zeros_like(cfos)
     cv2.fillPoly(mask, roi, 255)
     layer_roi = np.where(mask == 255, cfos, 0)
@@ -128,6 +118,9 @@ def watershed(binary_image):
     # Find properties of each labeled region
     regions = regionprops(labeled_array)
     
+    # Extracting the 'area' values from each region
+    area_values = [region.area for region in regions]
+
     # Parameters for filtering
     threshold_circularity = 0.75  # Circularity threshold
     
@@ -207,8 +200,14 @@ def watershed(binary_image):
         output_coords.append(circular_cluster.coords)
     for separated_artifact in separated_artifacts:
         output_coords.append(separated_artifact.coords)
-        
-    return output_coords
+    
+    coords_to_plot = []
+    for circular_cluster in circular_clusters:
+        coords_to_plot.append(circular_cluster.coords)
+    for artifact_cluster in artifact_clusters:
+        coords_to_plot.append(artifact_cluster.coords)
+
+    return output_coords, coords_to_plot
 
 def calculate_roi_area(roi):
     # Ensure the input array has the correct shape
@@ -245,7 +244,7 @@ def compiler(directory, ratio):
     cells_per_squared_mm = []
     
     for key, value in dict_of_binary.items():
-        output_coords = watershed(value[0])
+        output_coords, plot_coords = watershed(value[0])
         print(f"{key[:-4]}: Number of Cells - {len(output_coords)}")
         roi_area = calculate_roi_area(value[1])
         print(f"{key[:-4]}: ROI Area in µm^2 - {roi_area}")
@@ -290,7 +289,7 @@ def compiler(directory, ratio):
         
         # 3rd panel: identified cells
         artifical_binary = np.zeros(value[3].shape, dtype=bool)
-        for coords in output_coords:
+        for coords in plot_coords:
             artifical_binary[coords[:, 0], coords[:, 1]] = True
         axes[2].imshow(artifical_binary, cmap='grey')
         axes[2].set_title('Identified cells')

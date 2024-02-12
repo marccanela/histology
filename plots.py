@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import math
 import pingouin as pg
 
-directory = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2023-10 - TRAP2/Microscope TRAP2/Males/counts_python/'
+directory = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2023-10 - TRAP2/Microscope TRAP2/Females/counts_python/'
 df = pd.DataFrame()
 for file in os.listdir(directory):
     if file.endswith('.csv'):
@@ -48,7 +48,7 @@ def convert_pvalue_to_asterisks(pvalue):
         return "*"
     return ns
 
-def boxplot(df, brain_area='RSC', color_contrast=blue, ax=None):
+def boxplot(df, brain_area='rsc', color_contrast=blue, ax=None):
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(3.5,4))
@@ -119,7 +119,8 @@ def boxplot(df, brain_area='RSC', color_contrast=blue, ax=None):
         for x in range(len(data1)):
             ax.plot([dispersion_values_data1[x], dispersion_values_data2[x]], [data1[x], data2[x]], color = '#636466', linestyle='--', linewidth=0.5)
     
-    # ax.set_ylim(0,4)
+    ax.set_ylim(0,350)
+    
     ax.set_xlabel('')
     ax.set_ylabel('cFos+/mm^2', loc='top')    
     
@@ -129,16 +130,16 @@ def boxplot(df, brain_area='RSC', color_contrast=blue, ax=None):
     ax.tick_params(axis='x', colors='#636466')
     ax.tick_params(axis='y', colors='#636466')
     
-    pvalue = pg.ttest(data1, data2, paired=True)['p-val'][0]
+    # pvalue = pg.ttest(data1, data2, paired=True)['p-val'][0]
 
-    y, h, col = max(max(data1), max(data2)) + 5, 2, 'grey'
+    # y, h, col = max(max(data1), max(data2)) + 5, 2, 'grey'
     
-    ax.plot([data1_position, data1_position, data2_position, data2_position], [y, y+h, y+h, y], lw=1.5, c=col)
+    # ax.plot([data1_position, data1_position, data2_position, data2_position], [y, y+h, y+h, y], lw=1.5, c=col)
     
-    if pvalue > 0.05:
-        ax.text((data1_position+data2_position)*.5, y+2*h, convert_pvalue_to_asterisks(pvalue), ha='center', va='bottom', color=col, size=11)
-    elif pvalue <= 0.05:    
-        ax.text((data1_position+data2_position)*.5, y, convert_pvalue_to_asterisks(pvalue), ha='center', va='bottom', color=col, size=18)
+    # if pvalue > 0.05:
+    #     ax.text((data1_position+data2_position)*.5, y+2*h, convert_pvalue_to_asterisks(pvalue), ha='center', va='bottom', color=col, size=11)
+    # elif pvalue <= 0.05:    
+    #     ax.text((data1_position+data2_position)*.5, y, convert_pvalue_to_asterisks(pvalue), ha='center', va='bottom', color=col, size=18)
     
     plt.tight_layout()
     return ax
