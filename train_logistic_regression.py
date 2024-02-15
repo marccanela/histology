@@ -4,11 +4,13 @@ Created by @mcanela on Tuesday, 13/02/2024
 
 # Specify data
 directory = '//folder/becell/Macro tests/List of images/ROIs to analyze/'
-ratio = 1.55 # px/µm
+ratio = 1.55 # (1.55 px/µm at 10X)
+layer = 'layer_2' # Select layer_0, layer_1, layer_2, etc.
+
 
 # Select your ROIs
 from master_script import create_dict_of_binary
-dict_of_binary = create_dict_of_binary(directory)
+dict_of_binary = create_dict_of_binary(directory, layer)
 
 # Train you model
 from master_script import logistic_regression
@@ -54,29 +56,8 @@ from sklearn.metrics import accuracy_score
 accuracy_score(y_test, y_pred)
 
 # Plot the decision boundary
-import numpy as np
-import matplotlib.pyplot as plt
-def plot_boundary(log_reg, X=X_train, y=y_train):
-    plt.figure(figsize=(8, 6))
-
-    h = .02  # Step size in the mesh
-    x_min, x_max = X[:, 0].min() - 1, X[:, 0].max() + 1
-    y_min, y_max = X[:, 1].min() - 1, X[:, 1].max() + 1
-    
-    xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
-    
-    Z = log_reg.predict(np.c_[xx.ravel(), yy.ravel()])
-    Z = Z.reshape(xx.shape)
-    
-    plt.contourf(xx, yy, Z, cmap='Pastel1', alpha=0.8)
-    
-    # Scatter plot of data points
-    plt.scatter(X[:, 0], X[:, 1], c=y, edgecolors='k', cmap='Pastel1', marker='o')
-    plt.title('Logistic Regression with PCA Decision Boundary')
-    plt.xlabel('Principal Component 1')
-    plt.ylabel('Principal Component 2')
-    
-    plt.show()
+from master_script import plot_boundary
+plot_boundary(log_reg, X_train, y_train)
 
 
 

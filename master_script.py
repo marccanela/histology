@@ -17,8 +17,10 @@ from scipy.ndimage import label
 from scipy import ndimage as ndi
 import os
 from matplotlib.patches import Polygon
-import copy
 import random
+import math
+from tqdm import tqdm
+import time
 
 def split_layers(image):
     layers = {}
@@ -74,7 +76,7 @@ def normalize_array(arr):
     normalized_arr = (arr - min_val) / (max_val - min_val) * 255
     return normalized_arr.astype(int)
 
-def image_to_binary(image, tag):
+def image_to_binary(image, tag, layer):
     layers = split_layers(image)
     
     for layer_name, layer_data in layers.items():
@@ -84,18 +86,18 @@ def image_to_binary(image, tag):
             break
     
     # Apply the defined ROI
-    cfos = layers['layer_1']  # Select layer_0, layer_1, layer_2, etc.
+    cfos = layers[layer]  # Select layer_0, layer_1, layer_2, etc.
     mask = np.zeros_like(cfos)
     cv2.fillPoly(mask, roi, 255)
-    layer_roi = np.where(mask == 255, cfos, 0)
+    layer_roi = np.where(mask == 255, cfos, 0).astype(int)
     # plt.imshow(layer_roi, cmap='grey');
     
     # Apply Gaussian blur to reduce noise
-    blurred = cv2.GaussianBlur(layer_roi, (5, 5), 0)
+    # layer_roi = cv2.GaussianBlur(layer_roi, (5, 5), 0)
     # plt.imshow(blurred, cmap='grey');
     
     # Normalize the cfos layer
-    blurred_normalized = normalize_array(blurred)
+    blurred_normalized = normalize_array(layer_roi)
     # plt.imshow(blurred_normalized, cmap='grey');
   
     # Apply a threshold for the background
@@ -116,12 +118,7 @@ def logistic_regression(dict_of_binary, ratio):
     min_area_threshold_micron = 10  # Minimum area in µm^2
     min_area_threshold_pixels = min_area_threshold_micron * (ratio ** 2)
     
-    area_values = []
-    perimeter_values = []
-    # circularity_values = []
-    color_values = []
-    my_cells_uncroped = []
-    
+    all_my_regions = []
     for key, value in dict_of_binary.items():
         binary_image = value[0]
         blurred_normalized = value[4]
@@ -130,42 +127,52 @@ def logistic_regression(dict_of_binary, ratio):
         labeled_array, num_clusters = label(~binary_image)  # Invert the array because we want to label False values
         # Find properties of each labeled region
         regions = regionprops(labeled_array)
-
-        
         for region in regions:
             if region.area >= min_area_threshold_pixels:
-                area_values.append(region.area)
-                perimeter_values.append(region.perimeter)
-                # if region.perimeter != 0:
-                #     circularity = 4 * pi * region.area / (region.perimeter ** 2)
-                # else:
-                #     circularity = 0
-                # circularity_values.append(circularity)
-                
-                new_cfos = np.zeros(binary_image.shape, dtype=blurred_normalized.dtype)
-                new_blurred = copy.deepcopy(blurred_normalized/3)
-                colors_to_calculate_mean = []
-                coords = region.coords  # Coordinates of the current region
-                for coord in coords:
-                    x, y = coord
-                    # Update the value in new_cfos with the corresponding value from blurred_normalized
-                    new_cfos[x][y] = 255
-                    new_blurred[x][y] = 255
-                    colors_to_calculate_mean.append(blurred_normalized[x][y])
-            
-                color_values.append(np.mean(colors_to_calculate_mean))
-                my_cells_uncroped.append([blurred_normalized, new_cfos, new_blurred])
-    
+                all_my_regions.append([region, binary_image, blurred_normalized]) 
+        
     # Select 100 random items from the list along with their indices
-    selected_indices = random.sample(range(len(area_values)), 100)
+    selected_regions = random.sample(all_my_regions, 100)    
+        
+    area_values = []
+    perimeter_values = []
+    # circularity_values = []
+    color_values = []
+    my_cells_uncroped = []   
     
-    # Get the actual items based on the selected indices
-    area_values = [area_values[i] for i in selected_indices]
-    perimeter_values = [perimeter_values[i] for i in selected_indices]
-    color_values = [color_values[i] for i in selected_indices]
-    # circularity_values = [circularity_values[i] for i in selected_indices]
-    my_cells_uncroped = [my_cells_uncroped[i] for i in selected_indices]
-
+    for selected_region in tqdm(selected_regions, desc="Processing inputs", unit="input"):
+        region = selected_region[0]
+        binary_image = selected_region[1]
+        blurred_normalized = selected_region[2]
+        
+        area_values.append(region.area)
+        perimeter_values.append(region.perimeter)
+        # if region.perimeter != 0:
+        #     circularity = 4 * pi * region.area / (region.perimeter ** 2)
+        # else:
+        #     circularity = 0
+        # circularity_values.append(circularity)
+        
+        new_cfos = np.zeros(binary_image.shape).astype(int)
+        new_blurred = blurred_normalized // 3
+        colors_to_calculate_mean = []
+        coords = region.coords  # Coordinates of the current region
+        for coord in coords:
+            x, y = coord
+            new_blurred[x][y] = 255
+            
+            new_cfos[x][y] = 1
+            # Find rows and columns that are all False
+            rows_to_keep = np.any(new_cfos, axis=1)
+            cols_to_keep = np.any(new_cfos, axis=0)
+            # Crop the array based on the identified rows and columns
+            cropped_arr = blurred_normalized[rows_to_keep][:, cols_to_keep]
+            
+            colors_to_calculate_mean.append(blurred_normalized[x][y])
+    
+        color_values.append(np.mean(colors_to_calculate_mean))
+        my_cells_uncroped.append([blurred_normalized, new_blurred, cropped_arr])
+        time.sleep(0.1)
     
     X = np.column_stack((area_values,
                          perimeter_values,
@@ -179,10 +186,11 @@ def logistic_regression(dict_of_binary, ratio):
     for image in my_cells_uncroped:
         n += 1
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(16, 5), sharex=True)
-        ax1.imshow(image[0], cmap='gray')
-        ax2.imshow(image[1], cmap='gray')
+        max_edge = max([image[2].shape[0], image[2].shape[1]])
+        ax1.imshow(image[0], cmap='gray', extent=[0, max_edge, 0, max_edge])
+        ax2.imshow(image[1], cmap='gray', extent=[0, max_edge, 0, max_edge])
         ax3.imshow(image[2], cmap='gray')
-        plt.title(n)
+        plt.title('Image ' + str(n) + '/100')
         plt.draw()  # Redraw the figure
                 
         plt.pause(0.1)
@@ -216,6 +224,36 @@ def logistic_regression(dict_of_binary, ratio):
         
     return pipeline, X_train, X_test, y_train, y_test
 
+def plot_boundary(log_reg, X, y):
+    regressor = log_reg.named_steps['log_reg']
+    plt.figure(figsize=(8, 6))
+    
+    X_standarized = log_reg.named_steps['standarize'].transform(X)
+    X_pca = log_reg.named_steps['pca'].transform(X_standarized)
+    
+    h = .02  # Step size in the mesh
+    x_min, x_max = X_pca[:, 0].min() - 1, X_pca[:, 0].max() + 1
+    y_min, y_max = X_pca[:, 1].min() - 1, X_pca[:, 1].max() + 1
+    
+    xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
+    
+    Z = regressor.predict(np.c_[xx.ravel(), yy.ravel()])
+    Z = Z.reshape(xx.shape)
+        
+    plt.contourf(xx, yy, Z, cmap='Paired_r', alpha=0.8)
+    
+    # Scatter plot of data points
+    plt.scatter(X_pca[:, 0], X_pca[:, 1], c=y, edgecolors='k', cmap='Paired_r', marker='o')
+    plt.title('Logistic Regression with PCA Decision Boundary')
+    plt.xlabel('Principal Component 1')
+    plt.ylabel('Principal Component 2')
+    
+    # Create a custom legend for the scatter plot
+    handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=plt.cm.Paired_r.colors[0], markersize=10),
+               plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=plt.cm.Paired_r.colors[-1], markersize=10)]
+    plt.legend(handles, ['Non-cell', 'Cell'])
+    
+    plt.show()
 
 def watershed(binary_image, blurred_normalized, log_reg, ratio):
     # Label connected clusters
@@ -235,7 +273,7 @@ def watershed(binary_image, blurred_normalized, log_reg, ratio):
     circular_clusters = []
     artifact_clusters = []
     
-    for region in regions:
+    for region in tqdm(regions, desc="Processing inputs", unit="input"):
         colors_to_calculate_mean = []
         coords = region.coords  # Coordinates of the current region
         for coord in coords:
@@ -260,6 +298,7 @@ def watershed(binary_image, blurred_normalized, log_reg, ratio):
                         circular_clusters.append(region)
                 elif circularity < threshold_circularity:
                     artifact_clusters.append(region)
+        time.sleep(0.1)
 
     # Create a collection of images of artifacts
     my_artifacts = []
@@ -281,7 +320,7 @@ def watershed(binary_image, blurred_normalized, log_reg, ratio):
 
     # Analyze each artifact individually
     separated_artifacts = []
-    for artifact in my_artifacts:
+    for artifact in tqdm(my_artifacts, desc="Processing artifacts", unit="artifact"):
         # Calculate the distance to the edge
         distance_artifact = ndi.distance_transform_edt(artifact[0]) # Select the array
         distance_normalized_artifact = normalize_array(distance_artifact)
@@ -300,8 +339,23 @@ def watershed(binary_image, blurred_normalized, log_reg, ratio):
         for region in regions_artifact:
             factor = region.area/total
             separated_area = artifact[1] * factor
-            if separated_area >= min_area_threshold_pixels:
+            # Suposing that the separated is circular, we can calculate the perimeter
+            separated_perimeter = 2 * math.pi * math.sqrt((2 * separated_area) / math.pi)
+            
+            colors_to_calculate_mean = []
+            coords = region.coords  # Coordinates of the current region
+            for coord in coords:
+                x, y = coord
+                colors_to_calculate_mean.append(blurred_normalized[x][y])
+            
+            if log_reg.predict([[separated_area,
+                                 separated_perimeter,
+                                 np.mean(colors_to_calculate_mean),
+                                 # circularity
+                                 ]]) == 1:
+            
                 separated_artifacts.append(region)
+        time.sleep(0.1)
     
     output_coords = []
     for circular_cluster in circular_clusters:
@@ -316,6 +370,7 @@ def watershed(binary_image, blurred_normalized, log_reg, ratio):
         coords_to_plot.append(artifact_cluster.coords)
 
     return output_coords, coords_to_plot
+
 
 def calculate_roi_area(roi, ratio):
     # Ensure the input array has the correct shape
@@ -335,14 +390,14 @@ def calculate_roi_area(roi, ratio):
 # Run the whole script
 # =============================================================================
 
-def create_dict_of_binary(directory):
+def create_dict_of_binary(directory, layer):
     dict_of_binary = {}
     
     for filename in os.listdir(directory):
         if filename.endswith(".nd2"):
             file_path = os.path.join(directory, filename)
             image = nd2.imread(file_path)
-            binary_roi_elbow_cfos_cropped = image_to_binary(image, filename[:-4])
+            binary_roi_elbow_cfos_cropped = image_to_binary(image, filename[:-4], layer)
             dict_of_binary[filename] = binary_roi_elbow_cfos_cropped
     
     return dict_of_binary
@@ -355,15 +410,18 @@ def compiler(directory, dict_of_binary, ratio, log_reg):
     roi_surface = []
     cells_per_squared_mm = []
     
+    n=0
     for key, value in dict_of_binary.items():
+        n+=1
+        print('Analyzing image ' + str(key[:-4]) + ' (' + str(n) + '/' + len(dict_of_binary) + ')')
         binary_image = value[0]
         blurred_normalized = value[4]
         output_coords, plot_coords = watershed(binary_image, blurred_normalized, log_reg, ratio)
-        print(f"{key[:-4]}: Number of Cells - {len(output_coords)}")
+        print(f"Number of Cells - {len(output_coords)}")
         roi_area = calculate_roi_area(value[1], ratio)
-        print(f"{key[:-4]}: ROI Area in µm^2 - {roi_area}")
+        # print(f"{key[:-4]}: ROI Area in µm^2 - {roi_area}")
         cells_mm_2 = ((10**6)*len(output_coords))/roi_area
-        print(f"{key[:-4]}: Cells per square millimeter - {cells_mm_2}")
+        # print(f"{key[:-4]}: Cells per square millimeter - {cells_mm_2}")
         
         file_name.append(key[:-4])
         background_threshold.append(value[2])
