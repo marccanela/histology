@@ -12,7 +12,6 @@ import cv2
 from kneed import KneeLocator
 from scipy.signal import find_peaks
 from skimage.measure import regionprops
-from math import pi
 from scipy.ndimage import label
 from scipy import ndimage as ndi
 import os
@@ -21,6 +20,9 @@ import random
 import math
 from tqdm import tqdm
 import time
+from skimage import morphology
+from skimage.segmentation import watershed
+from skimage.feature import peak_local_max
 
 def split_layers(image):
     layers = {}
@@ -76,24 +78,17 @@ def normalize_array(arr):
     normalized_arr = (arr - min_val) / (max_val - min_val) * 255
     return normalized_arr.astype(int)
 
-def image_to_binary(image, tag, layer):
-    layers = split_layers(image)
-    
-    for layer_name, layer_data in layers.items():
-        roi_coords = draw_ROI(layer_data, tag)
-        if roi_coords is not None:
-            roi = np.array([roi_coords], dtype=np.int32)
-            break
+def image_to_binary(roi_data, layers, layer):
     
     # Apply the defined ROI
     cfos = layers[layer]  # Select layer_0, layer_1, layer_2, etc.
     mask = np.zeros_like(cfos)
-    cv2.fillPoly(mask, roi, 255)
-    layer_roi = np.where(mask == 255, cfos, 0).astype(int)
+    cv2.fillPoly(mask, roi_data, 255)
+    layer_roi = np.where(mask == 255, cfos, 0)#.astype(int)
     # plt.imshow(layer_roi, cmap='grey');
     
     # Apply Gaussian blur to reduce noise
-    # layer_roi = cv2.GaussianBlur(layer_roi, (5, 5), 0)
+    layer_roi = cv2.GaussianBlur(layer_roi, (5, 5), 0)
     # plt.imshow(blurred, cmap='grey');
     
     # Normalize the cfos layer
@@ -110,19 +105,28 @@ def image_to_binary(image, tag, layer):
     # identified[binary_image] = 0
     # plt.imshow(identified, cmap='grey');
     
-    return [binary_image, roi, elbow_value, cfos, blurred_normalized]
+    return [binary_image, roi_data, elbow_value, cfos, blurred_normalized]
+
+def get_square_coordinates(min_row, min_col, max_row, max_col):
+    rows = np.arange(min_row, max_row + 1)
+    cols = np.arange(min_col, max_col + 1)
+    
+    coordinates = np.array(np.meshgrid(rows, cols)).T.reshape(-1, 2)
+    
+    return coordinates
 
 
 def logistic_regression(dict_of_binary, ratio):
     # Calculate the minimum area in pixels using the conversion factor
-    min_area_threshold_micron = 10  # Minimum area in µm^2
+    # min_diameter_threshold_micron = 10  # Minimum diameter of a neuron nucleus in µm
+    min_diameter_threshold_micron = 3  # Minimum diameter of a neuron nucleus in µm
+    min_area_threshold_micron = math.pi * (min_diameter_threshold_micron/2)**2
     min_area_threshold_pixels = min_area_threshold_micron * (ratio ** 2)
     
     all_my_regions = []
     for key, value in dict_of_binary.items():
         binary_image = value[0]
         blurred_normalized = value[4]
-    
         # Label connected clusters
         labeled_array, num_clusters = label(~binary_image)  # Invert the array because we want to label False values
         # Find properties of each labeled region
@@ -136,10 +140,16 @@ def logistic_regression(dict_of_binary, ratio):
         
     area_values = []
     perimeter_values = []
-    # circularity_values = []
-    color_values = []
+    eccentricity_values = []
+    intensity_max = []
+    intensity_mean = []
+    intensity_max_background = []
+    intensity_mean_background = []
+
+    
     my_cells_uncroped = []   
     
+    frame_pixel = int(15 * ratio)
     for selected_region in tqdm(selected_regions, desc="Processing inputs", unit="input"):
         region = selected_region[0]
         binary_image = selected_region[1]
@@ -147,37 +157,69 @@ def logistic_regression(dict_of_binary, ratio):
         
         area_values.append(region.area)
         perimeter_values.append(region.perimeter)
-        # if region.perimeter != 0:
-        #     circularity = 4 * pi * region.area / (region.perimeter ** 2)
-        # else:
-        #     circularity = 0
-        # circularity_values.append(circularity)
+        eccentricity_values.append(region.eccentricity)
+        coords = region.coords  # Coordinates of the current region
+
+        colors = []
+        for coord in coords:
+            x, y = coord
+            colors.append(blurred_normalized[x][y])
+        intensity_max.append(max(colors))
+        intensity_mean.append(np.mean(colors))
+        
+        # Find background color
+        square_coordinates = get_square_coordinates(region.bbox[0], region.bbox[1], region.bbox[2], region.bbox[3])
+        coordinates = np.array([coord for coord in square_coordinates if not np.any(np.all(coord == coords, axis=1))])    
+        colors = []
+        for coord in coordinates:
+            x, y = coord
+            colors.append(blurred_normalized[x][y])
+        intensity_max_background.append(max(colors))
+        intensity_mean_background.append(np.mean(colors))
         
         new_cfos = np.zeros(binary_image.shape).astype(int)
         new_blurred = blurred_normalized // 3
-        colors_to_calculate_mean = []
-        coords = region.coords  # Coordinates of the current region
+                
         for coord in coords:
             x, y = coord
+            new_cfos[x][y] = 1
             new_blurred[x][y] = 255
             
-            new_cfos[x][y] = 1
-            # Find rows and columns that are all False
-            rows_to_keep = np.any(new_cfos, axis=1)
-            cols_to_keep = np.any(new_cfos, axis=0)
-            # Crop the array based on the identified rows and columns
-            cropped_arr = blurred_normalized[rows_to_keep][:, cols_to_keep]
-            
-            colors_to_calculate_mean.append(blurred_normalized[x][y])
-    
-        color_values.append(np.mean(colors_to_calculate_mean))
-        my_cells_uncroped.append([blurred_normalized, new_blurred, cropped_arr])
+        # Find rows and columns that are all False
+        rows_to_keep = np.any(new_cfos, axis=1)
+        cols_to_keep = np.any(new_cfos, axis=0)
+        # Crop the array based on the identified rows and columns
+        cropped_arr = blurred_normalized[rows_to_keep][:, cols_to_keep]
+        
+        new_boolean_arrays = []
+        for boolean_array in [rows_to_keep, cols_to_keep]:
+            # Find the index where consecutive True values start
+            start_index = np.argmax(boolean_array)
+            # Find the index where consecutive True values end
+            end_index = len(boolean_array) - np.argmax(boolean_array[::-1]) - 1
+            # Add 'frame_pixel' True values at the beginning and end
+            modified_arr = np.concatenate([boolean_array[:start_index-frame_pixel],
+                                           np.full(frame_pixel, True),
+                                           boolean_array[start_index:end_index],
+                                           np.full(frame_pixel, True),
+                                           boolean_array[end_index+frame_pixel:]])
+            new_boolean_arrays.append(modified_arr)
+        
+        # Crop the blurred_normalized and new_blurred
+        cropped_blurred_normalized = blurred_normalized[new_boolean_arrays[0]][:, new_boolean_arrays[1]]
+        cropped_new_blurred = new_blurred[new_boolean_arrays[0]][:, new_boolean_arrays[1]]
+        
+        # color_values.append(np.mean(colors_to_calculate_mean))
+        my_cells_uncroped.append([cropped_blurred_normalized, cropped_new_blurred, cropped_arr])
         time.sleep(0.1)
     
     X = np.column_stack((area_values,
-                         perimeter_values,
-                         color_values,
-                         # circularity_values
+                           perimeter_values,
+                           eccentricity_values,
+                           intensity_max,
+                          intensity_mean,
+                           intensity_max_background,
+                          intensity_mean_background,
                          ))
     
     # Display and label images
@@ -187,7 +229,7 @@ def logistic_regression(dict_of_binary, ratio):
         n += 1
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(16, 5), sharex=True)
         max_edge = max([image[2].shape[0], image[2].shape[1]])
-        ax1.imshow(image[0], cmap='gray', extent=[0, max_edge, 0, max_edge])
+        ax1.imshow(image[0], cmap='viridis', extent=[0, max_edge, 0, max_edge])
         ax2.imshow(image[1], cmap='gray', extent=[0, max_edge, 0, max_edge])
         ax3.imshow(image[2], cmap='gray')
         plt.title('Image ' + str(n) + '/100')
@@ -195,15 +237,51 @@ def logistic_regression(dict_of_binary, ratio):
                 
         plt.pause(0.1)
         # Take user input for each image
-        user_input = input("Enter a value (0 for non-positive or 1 for positive): ")
+        user_input = input("Enter 0 (no-cell) or 1 (cell): ")
         # Validate user input (optional)
-        while user_input not in ['0', '1']:
+        while user_input not in ['0', '1', '2', '3', '4', '5', '6', '7', '8']:
             print("Invalid input. Please enter 0 or 1.")
-            user_input = input("Enter a value (0 for non-positive or 1 for positive): ")
+            user_input = input("Enter 0 (no-cell) or 1 (cell): ")
     
         # Convert user input to int and append to the list
         y.append(int(user_input))
         plt.close()
+    
+    # Data exploration
+    attributes = [
+                    'area_values',
+                    'perimeter_values',
+                    # 'ratio_pa',
+                  'eccentricity_values',
+                   # 'ratio_back_max',
+                   'intensity_max',
+                   'intensity_mean',
+                   'intensity_max_background',
+                   'intensity_mean_background',
+                    'y',
+                  ]
+
+    df = pd.DataFrame(np.column_stack((X, y)), columns=attributes)
+    df['ratio_pa'] =  df.perimeter_values / df.area_values
+    df['ratio_back_max'] =  df.intensity_mean_background / df.intensity_max
+    
+    df = df.drop('perimeter_values', axis=1)
+    df = df.drop('area_values', axis=1)
+    df = df.drop('intensity_max', axis=1)
+    df = df.drop('intensity_mean', axis=1)
+    df = df.drop('intensity_max_background', axis=1)
+    df = df.drop('intensity_mean_background', axis=1)
+    
+    # df.hist(bins=50, figsize=(20,15))
+
+    # corr_matrix = df.corr()
+    # corr_matrix["y"].sort_values(ascending=False)
+    # from pandas.plotting import scatter_matrix
+    # scatter_matrix(df[attributes], figsize=(12, 8))
+
+    
+    X = df[['ratio_pa', 'ratio_back_max', 'eccentricity_values']].values
+    
     
     # Training a logistic regressor
     from sklearn.model_selection import train_test_split
@@ -214,18 +292,44 @@ def logistic_regression(dict_of_binary, ratio):
     from sklearn.preprocessing import StandardScaler
     from sklearn.decomposition import PCA
     from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import train_test_split
     pipeline = Pipeline([
         ('standarize', StandardScaler()),
-        ('pca', PCA(n_components=2)),  # You can specify the number of components
-        ('log_reg', LogisticRegression())
+        ('pca', PCA(n_components=2)),
+        ('classifier', LogisticRegression()),
+        # ('classifier', RandomForestClassifier(n_estimators=100, random_state=42)),
     ])
+    
+    
+    # from sklearn.feature_selection import RFE
+    # from itertools import combinations
+    # model = LogisticRegression()
+    # rfe = RFE(model, n_features_to_select=1)
+    # rfe.fit(X_train, y_train)
+    # feature_ranking = list(zip(range(1, len(rfe.ranking_) + 1), rfe.ranking_))
+    # feature_ranking.sort(key=lambda x: x[1])
+    # best_accuracy = 0.0
+    # best_feature_set = None
+    
+    # for k in range(1, len(feature_ranking) + 1):
+    #     selected_features = [feature[0] - 1 for feature in feature_ranking[:k]]  # Adjust indices for zero-based indexing
+    #     X_train_selected = X_train[:, selected_features]
+    #     X_test_selected = X_test[:, selected_features]
+    
+    #     model.fit(X_train_selected, y_train)
+    #     accuracy = model.score(X_test_selected, y_test)
+    
+    #     if accuracy > best_accuracy:
+    #         best_accuracy = accuracy
+    #         best_feature_set = selected_features
+    # return best_accuracy, best_feature_set
     
     pipeline.fit(X_train, y_train)
         
     return pipeline, X_train, X_test, y_train, y_test
-
+    
 def plot_boundary(log_reg, X, y):
-    regressor = log_reg.named_steps['log_reg']
+    regressor = log_reg.named_steps['classifier']
     plt.figure(figsize=(8, 6))
     
     X_standarized = log_reg.named_steps['standarize'].transform(X)
@@ -255,122 +359,384 @@ def plot_boundary(log_reg, X, y):
     
     plt.show()
 
-def watershed(binary_image, blurred_normalized, log_reg, ratio):
-    # Label connected clusters
-    labeled_array, num_clusters = label(~binary_image)  # Invert the array because we want to label False values
 
-    # Find properties of each labeled region
+def micrometer_to_pixels(distance, ratio):
+    converted = distance * ratio
+    return converted
+
+def diameter_to_area(diameter):
+    area = math.pi * (diameter/2)**2
+    return area
+
+def apply_watershed_cfos(binary_image, blurred_normalized, ratio,
+                         min_nuclear_diameter = 3, # um
+                         min_hole_diameter = 5, # um
+                         distance_2 = 7.313, # (between 7-10)
+                         # eccentricity_1 = 0.539, # (between 0.5-0.6)
+                         distance_3 = 4.01, # (between 3-5)
+                         # color_1 = 0.894, # (between 0.8-1)
+                         distance_4 = 4.085, # max range! (between 3-20)
+                         ):
+
+# =============================================================================
+# Dectect artifacts to separate
+# =============================================================================
+    
+    remove_holes = morphology.remove_small_holes(binary_image, int(diameter_to_area(micrometer_to_pixels(min_hole_diameter, ratio))))
+    # remove_holes = binary_image
+    
+    labeled_array, num_clusters = label(remove_holes)
     regions = regionprops(labeled_array)
     
-    # Parameters for filtering
-    threshold_circularity = 0.75  # Circularity threshold
-
-    # Calculate the minimum area in pixels using the conversion factor
-    min_area_threshold_micron = 10  # Minimum area in µm^2
-    min_area_threshold_pixels = min_area_threshold_micron * (ratio ** 2)
-        
-    # Filter elliptical/circular clusters based on circularity
-    circular_clusters = []
-    artifact_clusters = []
+    artifacts = []
+    non_artifacts = []
+    for region in regions:
+        if region.area > diameter_to_area(micrometer_to_pixels(min_nuclear_diameter, ratio)):
+            # if region.area < diameter_to_area(micrometer_to_pixels(distance_2, ratio)) or region.eccentricity < eccentricity_1:
+                # non_artifacts.append(region)
+            # else:
+                artifacts.append(region)
     
-    for region in tqdm(regions, desc="Processing inputs", unit="input"):
-        colors_to_calculate_mean = []
+    cell_landscape = np.zeros(binary_image.shape, dtype=bool)
+    for region in artifacts:
         coords = region.coords  # Coordinates of the current region
+        cell_landscape[coords[:, 0], coords[:, 1]] = True
+    
+    distance_ndi = ndi.distance_transform_edt(remove_holes)
+    mask = np.zeros(distance_ndi.shape, dtype=bool)
+    # coords = peak_local_max(distance_ndi, footprint=np.ones((3, 3)), labels=cell_landscape, min_distance=int(micrometer_to_pixels(distance_2, ratio)*0.5))
+    coords = peak_local_max(distance_ndi, footprint=np.ones((3, 3)), labels=cell_landscape, min_distance=int(micrometer_to_pixels(distance_2, ratio)))
+    mask[tuple(coords.T)] = True
+    markers, _ = ndi.label(mask)
+    labels = watershed(-distance_ndi, markers, mask=cell_landscape)
+    # plt.imshow(labels);
+    separated_regions = regionprops(labels)
+    for region in separated_regions:
+        if region.area > diameter_to_area(micrometer_to_pixels(min_nuclear_diameter, ratio)):
+            if region.area > diameter_to_area(micrometer_to_pixels(distance_3, ratio)):
+                non_artifacts.append(region)
+                    
+# =============================================================================
+# Identify actual cells        
+# =============================================================================
+    
+    actual_cells = []         
+    for region in non_artifacts:
+        coords = region.coords
+        
+        # Find colors
+        colors = []
         for coord in coords:
             x, y = coord
-            colors_to_calculate_mean.append(blurred_normalized[x][y])
+            colors.append(blurred_normalized[x][y])
             
+        # Find background color
+        square_coordinates = get_square_coordinates(region.bbox[0], region.bbox[1], region.bbox[2], region.bbox[3])
+        coordinates = np.array([coord for coord in square_coordinates if not np.any(np.all(coord == coords, axis=1))])    
+        background_colors = []
+        for coord in coordinates:
+            x, y = coord
+            background_colors.append(blurred_normalized[x][y])
+
+        # Calculate color ratio
+        color_ratio = np.mean(background_colors) / max(colors)
+        
+        if region.area > diameter_to_area(micrometer_to_pixels(min_nuclear_diameter, ratio)):
+            # if color_ratio < color_1:
+                if region.area > diameter_to_area(micrometer_to_pixels(distance_4, ratio)):
+                    actual_cells.append(region)
+        
+    # cell_landscape = np.zeros(binary_image.shape, dtype=bool)
+    # for region in actual_cells:
+    #     coords = region.coords  # Coordinates of the current region
+    #     cell_landscape[coords[:, 0], coords[:, 1]] = True
+    # plt.imshow(cell_landscape);
+            
+    # median_area = max([region.area for region in actual_cells])
+    # median_diameter = np.median([region.equivalent_diameter_area for region in actual_cells])
+    
+    return actual_cells
+    
+
+def apply_watershed(binary_image, blurred_normalized, log_reg, ratio, image_type):
+    
+    if image_type == 'tdt':
+        min_diameter_threshold_micron = 10  # Minimum diameter of a neuron in µm
+    elif image_type == 'cfos':
+        min_diameter_threshold_micron = 3  # Minimum diameter of a neuron nucleus in µm
+    min_area_threshold_micron = math.pi * (min_diameter_threshold_micron/2)**2
+    min_diameter_threshold_pixels = min_diameter_threshold_micron * ratio
+    min_area_threshold_pixels = min_area_threshold_micron * (ratio ** 2)
+    
+    # Apply logistic regression
+    actual_cells = []
+    labeled_array, num_clusters = label(~binary_image)  # Invert the array because we want to label False values
+    regions = regionprops(labeled_array)
+    for region in regions:
         if region.area >= min_area_threshold_pixels:
-            # Calculate circularity: 4 * pi * area / (perimeter^2)
-            if region.perimeter != 0:
-                circularity = 4 * pi * region.area / (region.perimeter ** 2)
-            else:
-                circularity = 0
-                    
-            if log_reg.predict([[region.area,
-                                 region.perimeter,
-                                 np.mean(colors_to_calculate_mean),
-                                 # circularity
-                                 ]]) == 1:
-                
-                # Check circularity and minimum area
-                if circularity >= threshold_circularity:
-                        circular_clusters.append(region)
-                elif circularity < threshold_circularity:
-                    artifact_clusters.append(region)
-        time.sleep(0.1)
-
-    # Create a collection of images of artifacts
-    my_artifacts = []
-    for region in artifact_clusters:
-        # Select only those artifacts that are big
-        if region.area >= min_area_threshold_pixels:     
-            artifacts_binary = np.zeros(binary_image.shape, dtype=bool)
-            coords = region.coords  # Coordinates of the current region
-            artifacts_binary[coords[:, 0], coords[:, 1]] = True
-            # Find rows and columns that are all False
-            # rows_to_keep = np.any(artifacts_binary, axis=1)
-            # cols_to_keep = np.any(artifacts_binary, axis=0)
-            # Crop the array based on the identified rows and columns
-            # cropped_arr = artifacts_binary[rows_to_keep][:, cols_to_keep]
-            # Save the array of each individual artifact and its area
-            artifact_info = [artifacts_binary, region.area]
-            my_artifacts.append(artifact_info)
-    # plt.imshow(my_artifacts[25][0]);
-
-    # Analyze each artifact individually
-    separated_artifacts = []
-    for artifact in tqdm(my_artifacts, desc="Processing artifacts", unit="artifact"):
-        # Calculate the distance to the edge
-        distance_artifact = ndi.distance_transform_edt(artifact[0]) # Select the array
-        distance_normalized_artifact = normalize_array(distance_artifact)
-        # plt.imshow(distance_normalized);
-        # Select only the center/s of the artifact
-        threshold_artifact = 0.8 * 255
-        binary_artifact = distance_normalized_artifact < threshold_artifact
-        # plt.imshow(binary_artifact);
-        # Count the number and sizes of the centers
-        labeled_array_artifact, num_clusters_artifact = label(~binary_artifact)  # Invert the array because we want to label False values
-        regions_artifact = regionprops(labeled_array_artifact)
-        # Calculate the poderated mean of the area of the artifact by the area of its centers
-        # Consider only if passes the min_area
-        # Then append the coordinates of each
-        total = sum(region.area for region in regions_artifact)
-        for region in regions_artifact:
-            factor = region.area/total
-            separated_area = artifact[1] * factor
-            # Suposing that the separated is circular, we can calculate the perimeter
-            separated_perimeter = 2 * math.pi * math.sqrt((2 * separated_area) / math.pi)
             
-            colors_to_calculate_mean = []
+            colors = []
             coords = region.coords  # Coordinates of the current region
             for coord in coords:
                 x, y = coord
-                colors_to_calculate_mean.append(blurred_normalized[x][y])
+                colors.append(blurred_normalized[x][y])
             
-            if log_reg.predict([[separated_area,
-                                 separated_perimeter,
-                                 np.mean(colors_to_calculate_mean),
-                                 # circularity
+            # Find background color
+            square_coordinates = get_square_coordinates(region.bbox[0], region.bbox[1], region.bbox[2], region.bbox[3])
+            coordinates = np.array([coord for coord in square_coordinates if not np.any(np.all(coord == coords, axis=1))])    
+            background_colors = []
+            for coord in coordinates:
+                x, y = coord
+                background_colors.append(blurred_normalized[x][y])
+            
+            if log_reg.predict([[
+                               # region.area,
+                                 # region.perimeter,
+                                 region.perimeter / region.area,
+                                 np.mean(background_colors) / max(colors),
+                                  region.eccentricity,
+                                 # max(colors),
+                                  # np.mean(colors),
+                                 # max(background_colors),
+                                 # np.mean(background_colors),
                                  ]]) == 1:
-            
-                separated_artifacts.append(region)
-        time.sleep(0.1)
+                actual_cells.append(region)
+        
+    # median_area = np.median([region.area for region in actual_cells])
+    # median_diameter = np.median([region.equivalent_diameter_area for region in actual_cells])
     
     output_coords = []
-    for circular_cluster in circular_clusters:
-        output_coords.append(circular_cluster.coords)
-    for separated_artifact in separated_artifacts:
-        output_coords.append(separated_artifact.coords)
+    for region in tqdm(actual_cells, desc="Processing inputs", unit="input"):
+        cell_landscape = np.zeros(binary_image.shape, dtype=bool)
+        coords = region.coords
+        cell_landscape[coords[:, 0], coords[:, 1]] = True
+        
+        remove_holes = morphology.remove_small_holes(cell_landscape, int(region.equivalent_diameter_area))
+        labeled_array, num_clusters = label(remove_holes)
+        new_region = regionprops(labeled_array)
+        
+        if len(new_region) != 1:
+            print('More than one region found after removing holes.')
+        else:
+            new_region = new_region[0]
+            if new_region.eccentricity < 0.8:
+                if new_region.area >= min_area_threshold_pixels:
+                    
+                    colors = []
+                    coords = new_region.coords  # Coordinates of the current region
+                    for coord in coords:
+                        x, y = coord
+                        colors.append(blurred_normalized[x][y])
+                    # Find background color
+                    square_coordinates = get_square_coordinates(new_region.bbox[0], new_region.bbox[1], new_region.bbox[2], new_region.bbox[3])
+                    coordinates = np.array([coord for coord in square_coordinates if not np.any(np.all(coord == coords, axis=1))])    
+                    background_colors = []
+                    for coord in coordinates:
+                        x, y = coord
+                        background_colors.append(blurred_normalized[x][y])
+                    
+                    if log_reg.predict([[
+                                       # new_region.area,
+                                         # new_region.perimeter,
+                                         new_region.perimeter / new_region.area,
+                                         np.mean(background_colors) / max(colors),
+                                          new_region.eccentricity,
+                                         # max(colors),
+                                          # np.mean(colors),
+                                         # max(background_colors),
+                                         # np.mean(background_colors),
+                                         ]]) == 1:
+                        output_coords.append(new_region)
+            
+            if new_region.eccentricity >= 0.8:
+                distance = ndi.distance_transform_edt(remove_holes)
+                coords = peak_local_max(distance, footprint=np.ones((3, 3)), labels=remove_holes, min_distance=int(min_diameter_threshold_pixels))
+                mask = np.zeros(distance.shape, dtype=bool)
+                mask[tuple(coords.T)] = True
+                markers, _ = ndi.label(mask)
+                labels = watershed(-distance, markers, mask=remove_holes)
+                # plt.imshow(labels);
+                
+                separated_regions = regionprops(labels)
+                for separated_region in separated_regions:
+                    if separated_region.area >= min_area_threshold_pixels:
+                        colors = []
+                        coords = separated_region.coords  # Coordinates of the current region
+                        for coord in coords:
+                            x, y = coord
+                            colors.append(blurred_normalized[x][y])
+                        # Find background color
+                        square_coordinates = get_square_coordinates(separated_region.bbox[0], separated_region.bbox[1], separated_region.bbox[2], separated_region.bbox[3])
+                        coordinates = np.array([coord for coord in square_coordinates if not np.any(np.all(coord == coords, axis=1))])    
+                        background_colors = []
+                        for coord in coordinates:
+                            x, y = coord
+                            background_colors.append(blurred_normalized[x][y])
+                        if log_reg.predict([[
+                                           # separated_region.area,
+                                             # separated_region.perimeter,
+                                             separated_region.perimeter / separated_region.area,
+                                             np.mean(background_colors) / max(colors),
+                                              separated_region.eccentricity,
+                                             # max(colors),
+                                              # np.mean(colors),
+                                             # max(background_colors),
+                                             # np.mean(background_colors),
+                                             ]]) == 1:
+                            output_coords.append(separated_region)
+        time.sleep(0.1)
     
-    coords_to_plot = []
-    for circular_cluster in circular_clusters:
-        coords_to_plot.append(circular_cluster.coords)
-    for artifact_cluster in artifact_clusters:
-        coords_to_plot.append(artifact_cluster.coords)
+    # cell_landscape = np.zeros(binary_image.shape, dtype=bool)
+    # for region in actual_cells:
+    #     coords = region.coords  # Coordinates of the current region
+    #     cell_landscape[coords[:, 0], coords[:, 1]] = True
+    # # plt.imshow(cell_landscape);
+    
+    # # Apply extra filters
+    # remove_holes = morphology.remove_small_holes(cell_landscape, median_area // 2)
+    # # plt.imshow(remove_holes);
+    # # remove_objects = morphology.remove_small_objects(remove_holes, int(median_area*0.95))
+    # # plt.imshow(remove_objects);
+    # remove_objects = remove_holes
+    
+    # # Apply watershed
+    # distance = ndi.distance_transform_edt(remove_objects)  
+    # coords = peak_local_max(distance, footprint=np.ones((3, 3)), labels=remove_objects, min_distance=int(min_diameter_threshold_pixels))
+    # mask = np.zeros(distance.shape, dtype=bool)
+    # mask[tuple(coords.T)] = True
+    # markers, _ = ndi.label(mask)
+    # labels = watershed(-distance, markers, mask=remove_objects)
+    # # plt.imshow(labels);
+    
+    
+    
+    # output_coords = []
+    # regions = regionprops(labels)
+    # for region in regions:
+    #     if region.area >= min_area_threshold_pixels:
+    #         if log_reg.predict([[region.area,
+    #                               region.perimeter,
+    #                               # region.eccentricity,
+    #                               ]]) == 1:
+    #             output_coords.append(region)
+    
+    #========
+    
+    # # Label connected clusters
+    # labeled_array, num_clusters = label(~binary_image)  # Invert the array because we want to label False values
 
-    return output_coords, coords_to_plot
+    # # Find properties of each labeled region
+    # regions = regionprops(labeled_array)
+    
+    # # Parameters for filtering
+    # threshold_circularity = 0.75  # Circularity threshold
 
+    # # Calculate the minimum area in pixels using the conversion factor
+    # min_area_threshold_micron = 10  # Minimum area in µm^2
+    # min_area_threshold_pixels = min_area_threshold_micron * (ratio ** 2)
+        
+    # # Filter elliptical/circular clusters based on circularity
+    # circular_clusters = []
+    # artifact_clusters = []
+    
+    # for region in tqdm(regions, desc="Processing inputs", unit="input"):
+    #     colors_to_calculate_mean = []
+    #     coords = region.coords  # Coordinates of the current region
+    #     for coord in coords:
+    #         x, y = coord
+    #         colors_to_calculate_mean.append(blurred_normalized[x][y])
+            
+    #     if region.area >= min_area_threshold_pixels:
+    #         # Calculate circularity: 4 * pi * area / (perimeter^2)
+    #         if region.perimeter != 0:
+    #             circularity = 4 * pi * region.area / (region.perimeter ** 2)
+    #         else:
+    #             circularity = 0
+                    
+    #         if log_reg.predict([[region.area,
+    #                              region.perimeter,
+    #                              np.mean(colors_to_calculate_mean),
+    #                              # circularity
+    #                              ]]) == 1:
+                
+    #             # Check circularity and minimum area
+    #             if circularity >= threshold_circularity:
+    #                     circular_clusters.append(region)
+    #             elif circularity < threshold_circularity:
+    #                 artifact_clusters.append(region)
+    #     time.sleep(0.1)
+    
+    
+    # # Create a collection of images of artifacts
+    # my_artifacts = []
+    # for region in artifact_clusters:
+    #     # Select only those artifacts that are big
+    #     if region.area >= min_area_threshold_pixels:            
+    #         artifacts_binary = np.zeros(binary_image.shape, dtype=bool)
+    #         coords = region.coords  # Coordinates of the current region
+    #         artifacts_binary[coords[:, 0], coords[:, 1]] = True
+    #         # Find rows and columns that are all False
+    #         # rows_to_keep = np.any(artifacts_binary, axis=1)
+    #         # cols_to_keep = np.any(artifacts_binary, axis=0)
+    #         # Crop the array based on the identified rows and columns
+    #         # cropped_arr = artifacts_binary[rows_to_keep][:, cols_to_keep]
+    #         # Save the array of each individual artifact and its area
+    #         artifact_info = [artifacts_binary, region.area]
+    #         my_artifacts.append(artifact_info)
+    # # plt.imshow(my_artifacts[25][0]);
+
+    # # Analyze each artifact individually
+    # separated_artifacts = []
+    # for artifact in tqdm(my_artifacts, desc="Processing artifacts", unit="artifact"):
+    #     # Calculate the distance to the edge
+    #     distance_artifact = ndi.distance_transform_edt(artifact[0]) # Select the array
+    #     distance_normalized_artifact = normalize_array(distance_artifact)
+    #     # plt.imshow(distance_normalized);
+    #     # Select only the center/s of the artifact
+    #     threshold_artifact = 0.8 * 255
+    #     binary_artifact = distance_normalized_artifact < threshold_artifact
+    #     # plt.imshow(binary_artifact);
+    #     # Count the number and sizes of the centers
+    #     labeled_array_artifact, num_clusters_artifact = label(~binary_artifact)  # Invert the array because we want to label False values
+    #     regions_artifact = regionprops(labeled_array_artifact)
+    #     # Calculate the poderated mean of the area of the artifact by the area of its centers
+    #     # Consider only if passes the min_area
+    #     # Then append the coordinates of each
+    #     total = sum(region.area for region in regions_artifact)
+    #     for region in regions_artifact:
+    #         factor = region.area/total
+    #         separated_area = artifact[1] * factor
+    #         # Suposing that the separated is circular, we can calculate the perimeter
+    #         separated_perimeter = 2 * math.pi * math.sqrt((2 * separated_area) / math.pi)
+            
+    #         colors_to_calculate_mean = []
+    #         coords = region.coords  # Coordinates of the current region
+    #         for coord in coords:
+    #             x, y = coord
+    #             colors_to_calculate_mean.append(blurred_normalized[x][y])
+            
+    #         if log_reg.predict([[separated_area,
+    #                              separated_perimeter,
+    #                              np.mean(colors_to_calculate_mean),
+    #                              # circularity
+    #                              ]]) == 1:
+            
+    #             separated_artifacts.append(region)
+    #     time.sleep(0.1)
+    
+    # output_coords = []
+    # for circular_cluster in circular_clusters:
+    #     output_coords.append(circular_cluster.coords)
+    # for separated_artifact in separated_artifacts:
+    #     output_coords.append(separated_artifact.coords)
+    
+    # coords_to_plot = []
+    # for circular_cluster in circular_clusters:
+    #     coords_to_plot.append(circular_cluster.coords)
+    # for artifact_cluster in artifact_clusters:
+    #     coords_to_plot.append(artifact_cluster.coords)
+
+    return output_coords
 
 def calculate_roi_area(roi, ratio):
     # Ensure the input array has the correct shape
@@ -387,22 +753,38 @@ def calculate_roi_area(roi, ratio):
     return converted_area
     
 # =============================================================================
-# Run the whole script
+# Run some functions together
 # =============================================================================
 
-def create_dict_of_binary(directory, layer):
-    dict_of_binary = {}
+def create_dict_rois(directory):
     
+    dict_rois = {}
     for filename in os.listdir(directory):
         if filename.endswith(".nd2"):
             file_path = os.path.join(directory, filename)
             image = nd2.imread(file_path)
-            binary_roi_elbow_cfos_cropped = image_to_binary(image, filename[:-4], layer)
-            dict_of_binary[filename] = binary_roi_elbow_cfos_cropped
+            layers = split_layers(image)
+            
+            for layer_name, layer_data in layers.items():
+                roi_coords = draw_ROI(layer_data, filename[:-4])
+                if roi_coords is not None:
+                    roi = np.array([roi_coords], dtype=np.int32)
+                    dict_rois[filename[:-4]] = [roi, layers]
+                    break
+    return dict_rois
+
+
+def create_dict_of_binary(dict_rois, layer):
+    dict_of_binary = {}
+    
+    for tag, roi in dict_rois.items():
+        binary_roi_elbow_cfos_cropped = image_to_binary(roi[0], roi[1], layer)
+        dict_of_binary[tag] = binary_roi_elbow_cfos_cropped
     
     return dict_of_binary
 
-def compiler(directory, dict_of_binary, ratio, log_reg):
+
+def compiler(directory, dict_of_binary, ratio, layer):
         
     file_name = []
     background_threshold = []
@@ -413,17 +795,24 @@ def compiler(directory, dict_of_binary, ratio, log_reg):
     n=0
     for key, value in dict_of_binary.items():
         n+=1
-        print('Analyzing image ' + str(key[:-4]) + ' (' + str(n) + '/' + len(dict_of_binary) + ')')
-        binary_image = value[0]
+        print('Analyzing image ' + str(n) + '/' + str(len(dict_of_binary)) + ':' + str(key))
+        binary_image = ~value[0]
         blurred_normalized = value[4]
-        output_coords, plot_coords = watershed(binary_image, blurred_normalized, log_reg, ratio)
+        output_coords = apply_watershed_cfos(binary_image, blurred_normalized, ratio)
+        
+        # name = key + '_watershed.tif'
+        # file_path = os.path.join(directory, name)
+        # plt.imshow(output_coords)
+        # plt.savefig(file_path, dpi=300)
+        # plt.close()
+        
         print(f"Number of Cells - {len(output_coords)}")
         roi_area = calculate_roi_area(value[1], ratio)
         # print(f"{key[:-4]}: ROI Area in µm^2 - {roi_area}")
         cells_mm_2 = ((10**6)*len(output_coords))/roi_area
         # print(f"{key[:-4]}: Cells per square millimeter - {cells_mm_2}")
         
-        file_name.append(key[:-4])
+        file_name.append(key)
         background_threshold.append(value[2])
         num_cells.append(len(output_coords))
         roi_surface.append(roi_area)
@@ -431,19 +820,25 @@ def compiler(directory, dict_of_binary, ratio, log_reg):
         
         # Create an image with the results
         fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    
-        # 1st panel: original image with the ROI
-        axes[0].imshow(value[3], cmap='grey')
+        
+        # ======== 1st panel: original image with the ROI
+        mask = np.zeros_like(value[3])
+        cv2.fillPoly(mask, value[1], 255)
+        layer_roi = np.where(mask == 255, value[3], 0)#.astype(int)
+        rows_to_keep = np.any(layer_roi, axis=1)
+        cols_to_keep = np.any(layer_roi, axis=0)
+        to_plot = value[3][rows_to_keep][:, cols_to_keep]
+        axes[0].imshow(to_plot, cmap='grey')
         axes[0].set_title('Original figure')
-        roi_polygon = Polygon(value[1].squeeze(), edgecolor='red', linewidth=2, facecolor='none')
-        axes[0].add_patch(roi_polygon)
+        # roi_polygon = Polygon(value[1].squeeze(), edgecolor='red', linewidth=2, facecolor='none')
+        # axes[0].add_patch(roi_polygon)
         # Hide the axis ticks and values
         axes[0].set_xticks([])
         axes[0].set_yticks([])
         axes[0].set_xticklabels([])
         axes[0].set_yticklabels([])
         
-        # 2nd panel: threshold (elbow)
+        # ======== 2nd panel: threshold (elbow)
         hist, bins = np.histogram(value[4][value[4] != 0], bins=64, range=(1, 256)) 
         peaks, _ = find_peaks(hist)
         closest_peak_index = np.argmax(hist[peaks])
@@ -459,11 +854,21 @@ def compiler(directory, dict_of_binary, ratio, log_reg):
         axes[1].set_ylabel('Frequency')    # Corrected from axes[1].ylabel('Frequency')
         axes[1].legend()
         
-        # 3rd panel: identified cells
-        artifical_binary = np.zeros(value[3].shape, dtype=bool)
-        for coords in plot_coords:
-            artifical_binary[coords[:, 0], coords[:, 1]] = True
-        axes[2].imshow(artifical_binary, cmap='grey')
+        # ======== 3rd panel: identified cells
+        number_list = [x for x in range(len(output_coords))]
+        number_list.remove(0)
+        number_list = random.choices(number_list, k=len(number_list))
+        
+        artificial_binary = np.zeros(binary_image.shape)
+        for coords, number in zip(output_coords, number_list):
+            artificial_binary[coords.coords[:, 0], coords.coords[:, 1]] = number
+        
+        artificial_binary = artificial_binary[rows_to_keep][:, cols_to_keep]
+        artificial_binary[artificial_binary == 0] = np.nan
+        
+        axes[2].set_facecolor('black')
+        axes[2].imshow(artificial_binary, cmap='gist_rainbow')
+        
         axes[2].set_title('Identified cells')
         # Hide the axis ticks and values
         axes[2].set_xticks([])
@@ -475,7 +880,7 @@ def compiler(directory, dict_of_binary, ratio, log_reg):
         plt.tight_layout()
         
         # Save the image as a JPEG file
-        name = key[:-4] + '.jpg'
+        name = key + '_' + layer + '.jpg'
         file_path = os.path.join(directory, name)
         plt.savefig(file_path)
         plt.close()
@@ -489,12 +894,32 @@ def compiler(directory, dict_of_binary, ratio, log_reg):
     df = pd.DataFrame(output_dict)
     df_path = os.path.join(directory, 'results.csv')
     df.to_csv(df_path, index=False)
+    
+    return artificial_binary
+
+# =============================================================================
+# Master functions
+# =============================================================================
+
+def train_logistic_regressor(directory, layer, ratio):
+    dict_rois = create_dict_rois(directory)
+    dict_of_binary = create_dict_of_binary(dict_rois, layer)
+    log_reg, X_train, X_test, y_train, y_test = logistic_regression(dict_of_binary, ratio)
+    return log_reg, X_train, X_test, y_train, y_test
+    # best_accuracy, best_feature_set = logistic_regression(dict_of_binary, ratio)
+    # return best_accuracy, best_feature_set
 
 
-
-
-
-
+def analyze_layers(directory, list_of_layers, ratio):
+    dict_rois = create_dict_rois(directory)
+    my_binaries = {}
+    for layer in list_of_layers:
+        print('Analyzing ' + layer + ' from all images')
+        dict_of_binary = create_dict_of_binary(dict_rois, layer)
+        artifical_binary = compiler(directory, dict_of_binary, ratio, layer)
+        my_binaries[layer] = artifical_binary
+    return my_binaries
+    
 
 
 

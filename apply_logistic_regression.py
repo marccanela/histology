@@ -2,20 +2,55 @@
 Created by @mcanela on Tuesday, 13/02/2024
 '''
 
-# Specify data
-directory = '//folder/becell/Macro tests/List of images/ROIs to analyze/'
+# Specify data and load previously trained logistic regressors
+directory = '/run/user/1000/gvfs/smb-share:server=172.20.4.47,share=becell/Macro tests/List of images/More ROIs/'
 ratio = 1.55 # (1.55 px/µm at 10X)
-layer = 'layer_2' # Select layer_0, layer_1, layer_2, etc.
 
-# Load previously trained logistic regressor
-import pickle as pk
-with open(directory + 'log_reg.pkl', 'rb') as file:
-    log_reg = pk.load(file)
+# import pickle as pk
+# with open('//folder/becell/Macro tests/Marc countings script/tdtomato/log_reg.pkl', 'rb') as file:
+#     tdt = pk.load(file)
+with open(directory + 'train_dict.pkl', 'rb') as file:
+    dict_of_binary = pk.load(file)
 
-# Select your ROIs
-from master_script import create_dict_of_binary
-dict_of_binary = create_dict_of_binary(directory, layer)
+# dict_of_layers = {
+#     # 'layer_1': tdt,
+#     'layer_2': cfos,
+#     }
 
-# Apply the logistic regressor
-from master_script import compiler
-compiler(directory, dict_of_binary, ratio, log_reg)
+list_of_layers = ['layer_1']
+
+# Run the function to calculate cells in each layer
+from master_script import analyze_layers
+my_binaries = analyze_layers(directory, list_of_layers, ratio)
+
+
+
+
+
+
+
+
+
+
+# =========
+
+binary_channel1 = [elem for elem in my_binaries.values()][0]
+binary_channel2  = [elem for elem in my_binaries.values()][1]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
