@@ -371,11 +371,11 @@ def diameter_to_area(diameter):
 def apply_watershed_cfos(binary_image, blurred_normalized, ratio,
                          min_nuclear_diameter = 3, # um
                          min_hole_diameter = 5, # um
-                         distance_2 = 7.313, # (between 7-10)
+                         distance_2 = 12.318, # (between 7-10)
                          # eccentricity_1 = 0.539, # (between 0.5-0.6)
-                         distance_3 = 4.01, # (between 3-5)
+                         distance_3 = 7.949, # (between 3-5)
                          # color_1 = 0.894, # (between 0.8-1)
-                         distance_4 = 4.085, # max range! (between 3-20)
+                         distance_4 = 12.189, # max range! (between 3-20)
                          ):
 
 # =============================================================================

@@ -9,39 +9,41 @@ import math
 import copy
 import matplotlib.pyplot as plt
 
-directory = '/run/user/1000/gvfs/smb-share:server=172.20.4.47,share=becell/Macro tests/List of images/More ROIs/'
+directory = '//folder/becell/Macro tests/List of images/ROIs to analyze/'
 # dict_rois = create_dict_rois(directory)
 
 import pickle as pk
 # with open(directory + 'dict_rois.pkl', 'wb') as file:
 #     pk.dump(dict_rois, file)
-with open(directory + 'test_dict.pkl', 'rb') as file:
-    dict_of_binary = pk.load(file)
+with open(directory + 'dict_rois_jose.pkl', 'rb') as file:
+    dict_rois = pk.load(file)
 
-# dict_of_binary = create_dict_of_binary(dict_rois, 'layer_2')
+# dict_of_binary = create_dict_of_binary(dict_rois, 'layer_1')
 
 
 def evaluate(dict_of_binary, ratio, hyperparameters):
     actual_values = {
-        '24003_10X_PVT_002': 260.5,
-        '26426_10X_PVT_001': 206.5,
-        'Male_1_ca3_001': 68,
-        'Male_1_Cg_001': 225,
-        'Male_1_Cg_002': 153.5,
-        'Male_1_dg_001': 88,
-        'Male_1_dg_002': 92.5,
-        'Male_1_PFC_003': 164,
-        'Male_1_RSC_001': 136.5,
-        'Male_1_RSC_002': 162.5,
-        'Male_4_ca3_003': 69,
-        'Male_4_ca3_004': 56.5,
-        'Male_4_Cg_003': 103,
-        'Male_4_Cg_004': 150,
-        'Male_4_dg_003': 46.5,
-        'Male_4_PFC_002': 175.5,
-        'Male_4_PFC_003': 74.5,
-        'Male_4_PFC_006': 148,
-        'Male_4_RSC_001': 123.5,
+        '24003_10X_PVT_001': 51,
+        '24003_10X_PVT_002': 35.7,
+        '26426_10X_PVT_': 17.3,
+        '26426_10X_PVT_001': 33,
+        # 'Male_1_ca3_001': 68,
+        # 'Male_1_Cg_001': 225,
+        # 'Male_1_Cg_002': 153.5,
+        # 'Male_1_dg_001': 88,
+        # 'Male_1_dg_002': 92.5,
+        # 'Male_1_PFC_003': 164,
+        # 'Male_1_RSC_001': 136.5,
+        # 'Male_1_RSC_002': 162.5,
+        # 'Male_4_ca3_003': 69,
+        # 'Male_4_ca3_004': 56.5,
+        # 'Male_4_Cg_003': 103,
+        # 'Male_4_Cg_004': 150,
+        # 'Male_4_dg_003': 46.5,
+        # 'Male_4_PFC_002': 175.5,
+        # 'Male_4_PFC_003': 74.5,
+        # 'Male_4_PFC_006': 148,
+        # 'Male_4_RSC_001': 123.5,
         }
 
     predicted_values = {}
