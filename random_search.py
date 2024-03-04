@@ -9,7 +9,7 @@ import math
 import copy
 import matplotlib.pyplot as plt
 
-directory = '//folder/becell/Macro tests/List of images/ROIs to analyze/'
+directory = 'C:/Users/mcanela/Desktop/hipocampus/'
 # dict_rois = create_dict_rois(directory)
 
 import pickle as pk

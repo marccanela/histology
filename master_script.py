@@ -36,7 +36,8 @@ def draw_ROI(layer_data, tag):
     ax.imshow(layer_data, cmap='gray')
     ax.set_title(tag)
     print('Draw a ROI on this layer and click on the initial dot to finish.')
-    print('To use the next layer to draw the ROI, just close this window.')
+    print('To use the next layer to draw the ROI, just close this layer.')
+    print('Close all layers to use the whole image.')
 
     polygon_coords = []  # List to store selected points
     def onselect(verts):
@@ -95,7 +96,7 @@ def image_to_binary(roi_data, layers, layer):
     blurred_normalized = normalize_array(layer_roi)
     # plt.imshow(blurred_normalized, cmap='grey');
   
-    # Apply a threshold for the background
+    # Apply a threshold for the background    
     elbow_value = background_threshold(blurred_normalized)
     binary_image = blurred_normalized < elbow_value
     # plt.imshow(binary_image, cmap='grey');
@@ -371,11 +372,11 @@ def diameter_to_area(diameter):
 def apply_watershed_cfos(binary_image, blurred_normalized, ratio,
                          min_nuclear_diameter = 3, # um
                          min_hole_diameter = 5, # um
-                         distance_2 = 12.318, # (between 7-10)
+                         distance_2 = 7.313, # (between 7-10)
                          # eccentricity_1 = 0.539, # (between 0.5-0.6)
-                         distance_3 = 7.949, # (between 3-5)
+                         distance_3 = 4.01, # (between 3-5)
                          # color_1 = 0.894, # (between 0.8-1)
-                         distance_4 = 12.189, # max range! (between 3-20)
+                         distance_4 = 4.085, # max range! (between 3-20)
                          ):
 
 # =============================================================================
@@ -425,21 +426,21 @@ def apply_watershed_cfos(binary_image, blurred_normalized, ratio,
         coords = region.coords
         
         # Find colors
-        colors = []
-        for coord in coords:
-            x, y = coord
-            colors.append(blurred_normalized[x][y])
+        # colors = []
+        # for coord in coords:
+        #     x, y = coord
+        #     colors.append(blurred_normalized[x][y])
             
         # Find background color
-        square_coordinates = get_square_coordinates(region.bbox[0], region.bbox[1], region.bbox[2], region.bbox[3])
-        coordinates = np.array([coord for coord in square_coordinates if not np.any(np.all(coord == coords, axis=1))])    
-        background_colors = []
-        for coord in coordinates:
-            x, y = coord
-            background_colors.append(blurred_normalized[x][y])
+        # square_coordinates = get_square_coordinates(region.bbox[0], region.bbox[1], region.bbox[2], region.bbox[3])
+        # coordinates = np.array([coord for coord in square_coordinates if not np.any(np.all(coord == coords, axis=1))])    
+        # background_colors = []
+        # for coord in coordinates:
+        #     x, y = coord
+        #     background_colors.append(blurred_normalized[x][y])
 
         # Calculate color ratio
-        color_ratio = np.mean(background_colors) / max(colors)
+        # color_ratio = np.mean(background_colors) / max(colors)
         
         if region.area > diameter_to_area(micrometer_to_pixels(min_nuclear_diameter, ratio)):
             # if color_ratio < color_1:
@@ -771,6 +772,13 @@ def create_dict_rois(directory):
                     roi = np.array([roi_coords], dtype=np.int32)
                     dict_rois[filename[:-4]] = [roi, layers]
                     break
+            else:
+                # This block will execute if the "for" loop completes without a break
+                print('The whole image will be used as a ROI')
+                dimensions = list(layers.values())[0].shape
+                custom_values = np.array([[[0, 0], [0, dimensions[1]], [dimensions[0], dimensions[1]], [dimensions[0], 0]]], dtype=np.int32)
+                roi = np.array(custom_values, dtype=np.int32)
+                dict_rois[filename[:-4]] = [roi, layers]
     return dict_rois
 
 
@@ -778,7 +786,9 @@ def create_dict_of_binary(dict_rois, layer):
     dict_of_binary = {}
     
     for tag, roi in dict_rois.items():
-        binary_roi_elbow_cfos_cropped = image_to_binary(roi[0], roi[1], layer)
+        roi_data = roi[0]
+        layers = roi[1]
+        binary_roi_elbow_cfos_cropped = image_to_binary(roi_data, layers, layer)
         dict_of_binary[tag] = binary_roi_elbow_cfos_cropped
     
     return dict_of_binary
