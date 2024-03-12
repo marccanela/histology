@@ -21,31 +21,8 @@ with open(directory + 'dict_rois_jose.pkl', 'rb') as file:
 # dict_of_binary = create_dict_of_binary(dict_rois, 'layer_1')
 
 
-def evaluate(dict_of_binary, ratio, hyperparameters):
-    actual_values = {
-        '24003_10X_PVT_001': 51,
-        '24003_10X_PVT_002': 35.7,
-        '26426_10X_PVT_': 17.3,
-        '26426_10X_PVT_001': 33,
-        # 'Male_1_ca3_001': 68,
-        # 'Male_1_Cg_001': 225,
-        # 'Male_1_Cg_002': 153.5,
-        # 'Male_1_dg_001': 88,
-        # 'Male_1_dg_002': 92.5,
-        # 'Male_1_PFC_003': 164,
-        # 'Male_1_RSC_001': 136.5,
-        # 'Male_1_RSC_002': 162.5,
-        # 'Male_4_ca3_003': 69,
-        # 'Male_4_ca3_004': 56.5,
-        # 'Male_4_Cg_003': 103,
-        # 'Male_4_Cg_004': 150,
-        # 'Male_4_dg_003': 46.5,
-        # 'Male_4_PFC_002': 175.5,
-        # 'Male_4_PFC_003': 74.5,
-        # 'Male_4_PFC_006': 148,
-        # 'Male_4_RSC_001': 123.5,
-        }
-
+def evaluate(dict_of_binary, ratio, hyperparameters, actual_values):
+    
     predicted_values = {}
     for key, value in dict_of_binary.items():
         binary_image = ~value[0]
@@ -67,7 +44,7 @@ def evaluate(dict_of_binary, ratio, hyperparameters):
 
     return mae, predicted_values
 
-def random_search(dict_of_binary, num_iterations, ratio):
+def random_search(dict_of_binary, num_iterations, ratio, actual_values):
     best_loss = float('inf')
     best_hyperparameters = None
     best_predicted_values = None
@@ -93,7 +70,7 @@ def random_search(dict_of_binary, num_iterations, ratio):
         #         'nucleus_diameter': random.uniform(3, 10),
         #     }
         
-        loss, predicted_values = evaluate(dict_of_binary, ratio, hyperparameters)
+        loss, predicted_values = evaluate(dict_of_binary, ratio, hyperparameters, actual_values)
                 
         # Update best accuracy and hyperparameters if current iteration is better
         if loss < best_loss:
@@ -150,7 +127,7 @@ def mutate(individual, hyperparameter_ranges, mutation_rate):
     
     return mutated_individual
 
-def genetic_algorithm(dict_of_binary, num_iterations, ratio, population_size=10, initial_mutation_rate=0.7, mutation_rate_decay=0.5):
+def genetic_algorithm(dict_of_binary, num_iterations, ratio, actual_values, population_size=10, initial_mutation_rate=0.7, mutation_rate_decay=0.5):
     hyperparameter_ranges = {
         'distance_2': (3, 20),
         # 'eccentricity_1': (0.5, 0.6),
@@ -175,7 +152,7 @@ def genetic_algorithm(dict_of_binary, num_iterations, ratio, population_size=10,
         # Evaluate fitness for each individual in the population
         fitness = []
         for individual in population:
-            loss, predicted_values = evaluate(dict_of_binary, ratio, individual)
+            loss, predicted_values = evaluate(dict_of_binary, ratio, individual, actual_values)
             fitness.append((loss, individual, predicted_values))
 
         # Sort by fitness and select the top individuals
@@ -226,101 +203,6 @@ plt.xlabel('Iteration')
 plt.ylabel('Loss')
 plt.grid(True)
 plt.show()
-
-# =============================================================================
-# Stochastic Gradient Descent
-# =============================================================================
-
-
-def sgd(dict_of_binary, num_iterations, ratio, learning_rate=0.01, momentum=0.9, patience=10):
-
-    hyperparameters = {
-        'distance_2': random.uniform(7, 10), # (between 7-10)
-        'eccentricity_1': random.uniform(0.5, 0.6), # (between 0.5-0.6)
-        'distance_3': random.uniform(3, 5), # (between 3-5)
-        'color_1': random.uniform(0.8, 1), # (between 0.8-1)
-        'distance_4': random.uniform(3, 20), # max range! (between 3-20)
-    }
-    loss, predicted_values = evaluate(dict_of_binary, ratio, hyperparameters)
-    best_loss = loss
-    best_hyperparameters = hyperparameters
-    best_predicted_values = predicted_values
-
-    no_improvement_counter = 0
-    tolerance = 1e-3  # Adjust as needed
-    stochastic_perturbation = 1e-2
-
-    for iteration in tqdm(range(num_iterations), desc="Performing iterations", unit="iterations"):
-        gradients = {
-            'distance_2': 0,
-            'eccentricity_1': 0,
-            'distance_3': 0,
-            'color_1': 0,
-            'distance_4': 0,
-        }
-
-        # Compute gradients for each hyperparameter
-        for key in hyperparameters:
-            perturbed_hyperparameters_pos = hyperparameters.copy()
-            perturbed_hyperparameters_pos[key] += stochastic_perturbation  # Perturbation in the positive direction
-            perturbed_loss_pos, _ = evaluate(dict_of_binary, ratio, perturbed_hyperparameters_pos)
-        
-            perturbed_hyperparameters_neg = hyperparameters.copy()
-            perturbed_hyperparameters_neg[key] -= stochastic_perturbation  # Perturbation in the negative direction
-            perturbed_loss_neg, _ = evaluate(dict_of_binary, ratio, perturbed_hyperparameters_neg)
-        
-            gradient = (perturbed_loss_pos - perturbed_loss_neg) / (2 * stochastic_perturbation)  # Central difference
-            gradients[key] = gradient
-
-        # Update hyperparameters using SGD with momentum
-        for key in hyperparameters:
-            gradients[key] = momentum * gradients[key] + learning_rate * gradients[key]
-            hyperparameters[key] += gradients[key]
-
-        # Evaluate the objective function
-        loss, _ = evaluate(dict_of_binary, ratio, hyperparameters)
-
-        # Additional convergence check (optional)
-        if abs(loss - best_loss) < tolerance:
-            print("Stopping early as the improvement is below the tolerance (1e-6).")
-            break
-
-        # Update best accuracy and hyperparameters if current iteration is better
-        if loss < best_loss:
-            best_loss = loss
-            best_hyperparameters = hyperparameters
-            best_predicted_values = predicted_values
-            no_improvement_counter = 0
-        else:
-            no_improvement_counter += 1
-            print('No improvement: ' + no_improvement_counter + '/' + patience)
-
-        # Early stopping check
-        if no_improvement_counter >= patience:
-            print(f"Stopping early as there is no improvement for {patience} iterations (patience=10).")
-            break
-
-        time.sleep(0.1)
-
-    return best_loss, best_hyperparameters, best_predicted_values
-
-
-
-# Try different learning rates
-# learning_rates = [
-#     0.001, 
-#     0.01, 
-#     0.1
-#     ]
-# for lr in learning_rates:
-#     print(f"Testing lr={lr}")
-#     best_loss, best_hyperparameters = sgd(dict_of_binary, 100, 1.55, lr)
-#     print(f"Result: loss={best_loss}, Hyperparameters={best_hyperparameters}")
-
-
-
-
-
 
 
 
