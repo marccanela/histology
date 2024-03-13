@@ -6,7 +6,7 @@ DRAW ROIs
 import pickle as pkl
 
 # Define your ROIs and save them in your computer
-directory = 'C:/Users/mcanela/Desktop/nd2_images/'
+directory = '//folder/becell/Macro tests/images_cfos/'
 from master_script import create_dict_rois
 dict_rois = create_dict_rois(directory)
 with open(directory + 'dict_rois.pkl', 'wb') as file:

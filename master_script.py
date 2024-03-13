@@ -371,15 +371,23 @@ def diameter_to_area(diameter):
     return area
 
 def apply_watershed_cfos(binary_image, blurred_normalized, ratio,
+                         hyperparameters = None,
                          min_nuclear_diameter = 3, # um
                          min_hole_diameter = 5, # um
-                         distance_2 = 7.313, # (between 7-10)
+                         # distance_2 = 7.313, # (between 7-10)
                          # eccentricity_1 = 0.539, # (between 0.5-0.6)
-                         distance_3 = 4.01, # (between 3-5)
+                         # distance_3 = 4.01, # (between 3-5)
                          # color_1 = 0.894, # (between 0.8-1)
-                         distance_4 = 4.085, # max range! (between 3-20)
+                         # distance_4 = 4.085, # max range! (between 3-20)
                          ):
-
+    
+    if hyperparameters is not None:
+        distance_2 = hyperparameters['distance_2']
+        distance_3 = hyperparameters['distance_3']
+        distance_4 = hyperparameters['distance_4']
+    else:
+        print('No hyperparameters are found.')
+    
 # =============================================================================
 # Dectect artifacts to separate
 # =============================================================================
@@ -795,7 +803,7 @@ def create_dict_of_binary(dict_rois, layer):
     return dict_of_binary
 
 
-def compiler(directory, dict_of_binary, ratio, layer):
+def compiler(directory, dict_of_binary, ratio, layer, hyperparameters):
         
     file_name = []
     background_threshold = []
@@ -809,7 +817,7 @@ def compiler(directory, dict_of_binary, ratio, layer):
         print('Analyzing image ' + str(n) + '/' + str(len(dict_of_binary)) + ':' + str(key))
         binary_image = ~value[0]
         blurred_normalized = value[4]
-        output_coords = apply_watershed_cfos(binary_image, blurred_normalized, ratio)
+        output_coords = apply_watershed_cfos(binary_image, blurred_normalized, ratio, hyperparameters)
         
         # name = key + '_watershed.tif'
         # file_path = os.path.join(directory, name)
@@ -906,7 +914,7 @@ def compiler(directory, dict_of_binary, ratio, layer):
     df_path = os.path.join(directory, 'results.csv')
     df.to_csv(df_path, index=False)
     
-    return artificial_binary
+    # return artificial_binary
 
 # =============================================================================
 # Genetic Algorithm for hyperparameter optimization
@@ -918,8 +926,7 @@ def evaluate(dict_of_binary, ratio, hyperparameters, actual_values):
     for key, value in dict_of_binary.items():
         binary_image = ~value[0]
         blurred_normalized = value[4]
-        cells = apply_watershed_cfos(binary_image, blurred_normalized, ratio, 3, 5,
-                                     **hyperparameters)
+        cells = apply_watershed_cfos(binary_image, blurred_normalized, ratio, hyperparameters)
         predicted_values[key] = len(cells)
 
     common_keys = set(actual_values.keys()) & set(predicted_values.keys())
@@ -1065,17 +1072,9 @@ def genetic_algorithm(dict_of_binary, num_iterations, ratio, actual_values, popu
 # Master functions
 # =============================================================================
 
-def define_rois(directory):
-    dict_rois = create_dict_rois(directory)
-    return 
-
-
 def train_model(dict_rois, actual_values, layer, ratio):
     dict_of_binary = create_dict_of_binary(dict_rois, layer)
-    best_loss, best_hyperparameters, best_predicted_values, loss_list = genetic_algorithm(dict_of_binary, 
-                                                                                          50, 
-                                                                                          ratio,
-                                                                                          actual_values)
+    best_loss, best_hyperparameters, best_predicted_values, loss_list = genetic_algorithm(dict_of_binary, 50,  ratio, actual_values)
     print("Best Loss:", best_loss)
     print("Best Hyperparameters:", best_hyperparameters)
     print("Best Predicted Values:", best_predicted_values)
@@ -1086,18 +1085,45 @@ def train_model(dict_rois, actual_values, layer, ratio):
     plt.grid(True)
     plt.show()
     
-    return best_loss, best_hyperparameters, best_predicted_values, loss_list
+    return best_loss, best_hyperparameters, best_predicted_values
 
+def plot_correlation(actual_values, best_predicted_values):
+    
+    # Extract keys and values
+    keys = list(actual_values.keys())
+    values1 = [actual_values[key] for key in keys]
+    values2 = [best_predicted_values[key] for key in keys]
+    
+    # Plot
+    plt.scatter(values1, values2)
+    plt.xlabel('Actual values')
+    plt.ylabel('Predicted values')
+    plt.title('Correlation Plot')
+    plt.grid(True)
+    
+    # Calculate correlation coefficient
+    correlation_coefficient = np.corrcoef(values1, values2)[0, 1]
+    print("Correlation coefficient:", correlation_coefficient)
+    
+    # Plot correlation line
+    x_values = np.array(values1)
+    y_values = correlation_coefficient * x_values + np.mean(values2) - correlation_coefficient * np.mean(values1)
+    plt.plot(x_values, y_values, color='red', label=f'Correlation line: y = {correlation_coefficient:.2f}x + {np.mean(values2) - correlation_coefficient * np.mean(values1):.2f}')
+    
+    # Plot correlation value and equation
+    plt.text(0.1, 0.9, f'Correlation coefficient: {correlation_coefficient:.2f}', transform=plt.gca().transAxes)
+    plt.text(0.1, 0.85, f'Correlation equation: y = {correlation_coefficient:.2f}x + {np.mean(values2) - correlation_coefficient * np.mean(values1):.2f}', transform=plt.gca().transAxes)
 
-def analyze_layers(directory, list_of_layers, ratio):
-    dict_rois = create_dict_rois(directory)
-    my_binaries = {}
-    for layer in list_of_layers:
-        print('Analyzing ' + layer + ' from all images')
+    plt.show()
+    
+def analyze_images(dict_rois, directory, layer_dict, ratio):
+    # my_binaries = {}
+    for layer, hyperparameters in layer_dict.items():
+        print('Analyzing ' + layer )
         dict_of_binary = create_dict_of_binary(dict_rois, layer)
-        artifical_binary = compiler(directory, dict_of_binary, ratio, layer)
-        my_binaries[layer] = artifical_binary
-    return my_binaries
+        artifical_binary = compiler(directory, dict_of_binary, ratio, layer, hyperparameters)
+        # my_binaries[layer] = artifical_binary
+    # return my_binaries
     
 
 
