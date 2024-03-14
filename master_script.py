@@ -769,8 +769,11 @@ def calculate_roi_area(roi, ratio):
 def create_dict_rois(directory):
     
     dict_rois = {}
+    n = 0
     for filename in os.listdir(directory):
         if filename.endswith(".nd2"):
+            n += 1
+            print('Analyzing image ' + str(n))
             file_path = os.path.join(directory, filename)
             image = nd2.imread(file_path)
             layers = split_layers(image)
@@ -939,8 +942,12 @@ def evaluate(dict_of_binary, ratio, hyperparameters, actual_values):
     # Calculate MAE
     absolute_diff = [abs(actual_values[key] - predicted_values[key]) for key in common_keys]
     mae = sum(absolute_diff) / len(common_keys)
+    
+    # Calculate the relative error
+    relative_error = [abs(actual_values[key] - predicted_values[key]) / actual_values[key] for key in common_keys]
+    re_mean = sum(relative_error) / len(common_keys)
 
-    return mae, predicted_values
+    return re_mean, predicted_values
 
 def random_search(dict_of_binary, num_iterations, ratio, actual_values):
     best_loss = float('inf')
