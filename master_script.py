@@ -947,7 +947,7 @@ def evaluate(dict_of_binary, ratio, hyperparameters, actual_values):
     relative_error = [abs(actual_values[key] - predicted_values[key]) / actual_values[key] for key in common_keys]
     re_mean = sum(relative_error) / len(common_keys)
 
-    return re_mean, predicted_values
+    return mae, predicted_values
 
 def random_search(dict_of_binary, num_iterations, ratio, actual_values):
     best_loss = float('inf')

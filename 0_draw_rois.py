@@ -6,7 +6,7 @@ DRAW ROIs
 import pickle as pkl
 
 # Define your ROIs and save them in your computer
-directory = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-01a02 - cFos/microscope/hippocampus/'
+directory = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-01a02 - cFos/microscope/paraventricular_thalamus/'
 from master_script import create_dict_rois
 dict_rois = create_dict_rois(directory)
 with open(directory + 'dict_rois.pkl', 'wb') as file:
@@ -15,7 +15,6 @@ with open(directory + 'dict_rois.pkl', 'wb') as file:
 # Alternatively, you can open already saved ROIs and use them
 with open(directory + 'dict_rois.pkl', 'rb') as file:
     dict_rois = pkl.load(file)
-
 
 
 

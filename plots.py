@@ -9,17 +9,26 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import math
 import pingouin as pg
+import pickle as pkl
 
-directory = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2023-10 - TRAP2/Microscope TRAP2/Females/counts_python/'
+dir_countings = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-01a02 - cFos/microscope/paraventricular_thalamus/results/'
+dir_supervised = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-01a02 - cFos/'
+
+# Import countings
 df = pd.DataFrame()
-for file in os.listdir(directory):
+for file in os.listdir(dir_countings):
     if file.endswith('.csv'):
-        file_path = os.path.join(directory, file)
+        file_path = os.path.join(dir_countings, file)
         df2 = pd.read_csv(file_path)
         df = pd.concat([df, df2], ignore_index=True)
 
+# Import supervised
+with open(dir_supervised + 'supervised_annotation.pkl', 'rb') as file:
+    supervised_annotation = pkl.load(file)
+
 df['animal_id'] = df.file_name.str.split('_').str[1].astype(int)
 df['brain_area'] = df.file_name.str.split('_').str[2]
+df['group'] = df.file_name.str.split('_').str[0]
 
 blue = '#194680'
 red = '#801946'
@@ -48,7 +57,7 @@ def convert_pvalue_to_asterisks(pvalue):
         return "*"
     return ns
 
-def boxplot(df, brain_area='rsc', color_contrast=blue, ax=None):
+def boxplot(df, brain_area='pvt', color_contrast=blue, ax=None):
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(3.5,4))
@@ -57,69 +66,44 @@ def boxplot(df, brain_area='rsc', color_contrast=blue, ax=None):
     sns.set_theme(style="whitegrid")
     ax.yaxis.grid(True)
     ax.xaxis.grid(False)
+    jitter = 0.15 # Dots dispersion
     
     df = df[df.brain_area == brain_area]
     
-    # No-shock data
-    data1_position = 0
-    data1 = df[df.animal_id < 4]
-    data1, outliers1 = remove_outliers(data1, 'cells_per_squared_mm')
-    print('Outliers found: ' + outliers1)
+    groups = ['paired', 'unpaired', 'noshock']
+    positions = []
     
-    # data1 = data1['cells_per_squared_mm'].tolist()
-    # data1 = [x for x in data1 if not math.isnan(x)]
-    data1 = data1.groupby('animal_id')['cells_per_squared_mm'].mean().tolist()
-    
-    data1_mean = np.mean(data1)
-    data1_error = np.std(data1, ddof=1)
-    
-    # Shock data
-    data2_position = 1
-    data2 = df[df.animal_id > 3]
-    data2, outliers2 = remove_outliers(data2, 'cells_per_squared_mm')
-    print('Outliers found: ' + outliers2)
+    for group in groups:
+        data_position = groups.index(group)
+        positions.append(data_position)
+        data = df[df['group'] == group]
+        data, outliers = remove_outliers(data, 'cells_per_squared_mm')
+        print('Outliers found: ' + outliers)
+        
+        data = data.groupby('animal_id')['cells_per_squared_mm'].mean()
+        data_mean = np.mean(data)
+        data_error = np.std(data, ddof=1)
+        
+        ax.hlines(data_mean, xmin=data_position-0.25, xmax=data_position+0.25, color='#636466', linewidth=1.5)
+        ax.errorbar(data_position, data_mean, yerr=data_error, lolims=False, capsize = 3, ls='None', color='#636466', zorder=-1)
+        
+        dispersion_values_data = np.random.normal(loc=data_position, scale=jitter, size=len(data)).tolist()
+        ax.plot(dispersion_values_data, data,
+                'o',                            
+                markerfacecolor=color_contrast,    
+                markeredgecolor=color_contrast,
+                markeredgewidth=1,
+                markersize=5, 
+                label=group)
 
-    # data2 = data2['cells_per_squared_mm'].tolist()
-    # data2 = [x for x in data2 if not math.isnan(x)]
-    data2 = data2.groupby('animal_id')['cells_per_squared_mm'].mean().tolist()
+    ax.set_xticks(positions)
+    ax.set_xticklabels(groups)
     
-    data2_mean = np.mean(data2)
-    data2_error = np.std(data2, ddof=1)
-
-    ax.hlines(data1_mean, xmin=data1_position-0.25, xmax=data1_position+0.25, color='#636466', linewidth=1.5)
-    ax.hlines(data2_mean, xmin=data2_position-0.25, xmax=data2_position+0.25, color='#636466', linewidth=1.5)
+    # if len(data1) == len(data2):
+    #     for x in range(len(data1)):
+    #         ax.plot([dispersion_values_data1[x], dispersion_values_data2[x]], [data1[x], data2[x]], color = '#636466', linestyle='--', linewidth=0.5)
     
-    ax.errorbar(data1_position, data1_mean, yerr=data1_error, lolims=False, capsize = 3, ls='None', color='#636466', zorder=-1)
-    ax.errorbar(data2_position, data2_mean, yerr=data2_error, lolims=False, capsize = 3, ls='None', color='#636466', zorder=-1)
-
-    ax.set_xticks([data1_position, data2_position])
-    ax.set_xticklabels(['No-shock', 'Shock'])
-    
-    jitter = 0.15 # Dots dispersion
-    
-    dispersion_values_data1 = np.random.normal(loc=data1_position, scale=jitter, size=len(data1)).tolist()
-    ax.plot(dispersion_values_data1, data1,
-            'o',                            
-            markerfacecolor=color_contrast,    
-            markeredgecolor=color_contrast,
-            markeredgewidth=1,
-            markersize=5, 
-            label='Data1')      
-    
-    dispersion_values_data2 = np.random.normal(loc=data2_position, scale=jitter, size=len(data2)).tolist()
-    ax.plot(dispersion_values_data2, data2,
-            'o',                          
-            markerfacecolor=color_contrast,    
-            markeredgecolor=color_contrast,
-            markeredgewidth=1,
-            markersize=5, 
-            label='Data2')               
-    
-    if len(data1) == len(data2):
-        for x in range(len(data1)):
-            ax.plot([dispersion_values_data1[x], dispersion_values_data2[x]], [data1[x], data2[x]], color = '#636466', linestyle='--', linewidth=0.5)
-    
-    ax.set_ylim(0,350)
+    ax.set_ylim(100,250)
     
     ax.set_xlabel('')
     ax.set_ylabel('cFos+/mm^2', loc='top')    
