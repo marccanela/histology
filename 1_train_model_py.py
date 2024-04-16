@@ -1,49 +1,38 @@
 import pickle as pkl
 from master_script import train_model
 from master_script import plot_correlation
+import csv
+import matplotlib.pyplot as plt
 
 # Enter the directory where you store your .ND2 images and your roi_dict.pkl
-directory = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-01a02 - cFos/microscope/hippocampus/'
+directory = '/run/user/1000/gvfs/smb-share:server=172.20.4.47,share=becell/Macro tests/'
 
 # Import your ROIs
-with open(directory + 'rois_dg.pkl', 'rb') as file:
+with open(directory + 'dict_rois.pkl', 'rb') as file:
     dict_rois = pkl.load(file)
 
-file_names = [
-    "noshock_13_hip_001", "noshock_13_hip_002", "noshock_13_hip_004",
-    "noshock_14_hip_001", "noshock_14_hip_002", "noshock_14_hip_003", "noshock_14_hip_004",
-    "noshock_15_hip_001", "noshock_15_hip_002", "noshock_15_hip_003", "noshock_15_hip_004",
-    "noshock_16_hip_001", "noshock_16_hip_002", "noshock_16_hip_003", "noshock_16_hip_004",
-    "noshock_17_hip_001", "noshock_17_hip_002", "noshock_17_hip_003", "noshock_17_hip_004",
-    "noshock_18_hip_001", "noshock_18_hip_002", "noshock_18_hip_003", "noshock_18_hip_004",
-    "paired_1_hip_001", "paired_1_hip_002", "paired_1_hip_003", "paired_1_hip_004",
-    "paired_2_hip_001", "paired_2_hip_002", "paired_2_hip_003", "paired_2_hip_004", "paired_2_hip_005",
-    "paired_3_hip_001", "paired_3_hip_002", "paired_3_hip_003", "paired_3_hip_004",
-    "paired_4_hip_002", "paired_4_hip_003",
-    "paired_5_hip_001", "paired_5_hip_002", "paired_5_hip_003", "paired_5_hip_004",
-    "paired_6_hip_001", "paired_6_hip_002", "paired_6_hip_003", "paired_6_hip_004",
-    "unpaired_7_hip_001", "unpaired_7_hip_002", "unpaired_7_hip_003", "unpaired_7_hip_004", "unpaired_7_hip_005",
-    "unpaired_8_hip_001", "unpaired_8_hip_002", "unpaired_8_hip_003", "unpaired_8_hip_004",
-    "unpaired_9_hip_001", "unpaired_9_hip_002", "unpaired_9_hip_003", "unpaired_9_hip_004", "unpaired_9_hip_005",
-    "unpaired_10_hip_001_2", "unpaired_10_hip_002", "unpaired_10_hip_003", "unpaired_10_hip_004", "unpaired_10_hip_005",
-    "unpaired_11_hip_001", "unpaired_11_hip_002",
-    "unpaired_12_hip_001", "unpaired_12_hip_002", "unpaired_12_hip_003", "unpaired_12_hip_004", "unpaired_12_hip_005"
-]
-manual_counts = [
-    28, 41, 25, 32, 33, 41, 53, 61, 59, 40, 
-    52, 31, 26, 33, 48, 63, 45, 53, 41, 56, 
-    45, 57, 63, 53, 39, 43, 38, 38, 33, 43, 
-    32, 29, 53, 77, 86, 55, 40, 32, 36, 42, 
-    41, 37, 65, 60, 37, 45, 37, 44, 48, 42, 
-    33, 58, 40, 51, 43, 57, 39, 60, 48, 51, 
-    53, 33, 37, 40, 31, 45, 34, 41, 44, 29, 
-    39, 32
-]
-actual_values = dict(zip(file_names, manual_counts))
+def csv_to_dict(filename):
+    data_dict = {}
+    with open(filename, 'r') as csvfile:
+        csv_reader = csv.reader(csvfile)
+        for row in csv_reader:
+            if len(row) == 2:  # Ensure there are two columns in each row
+                key, value = row
+                data_dict[key] = float(value)
+    return data_dict
+
+actual_values = csv_to_dict(directory + 'counting.csv')
+
     
-best_loss, best_hyperparameters, best_predicted_values = train_model(dict_rois, actual_values, layer = 'layer_1', ratio = 1.55)
+best_loss, best_hyperparameters, best_predicted_values, loss_list = train_model(dict_rois, actual_values, layer = 'layer_1', ratio = 1.55)
 with open(directory + 'best_hyperparameters.pkl', 'wb') as file:
     pkl.dump(best_hyperparameters, file)
+
+plt.plot(range(1, len(loss_list) + 1), loss_list, marker='o', linestyle='-')
+plt.xlabel('Iteration')
+plt.ylabel('Loss')
+plt.grid(True)
+plt.show()
 
 plot_correlation(actual_values, best_predicted_values)
 
