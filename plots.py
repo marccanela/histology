@@ -10,11 +10,19 @@ import matplotlib.pyplot as plt
 import math
 import pingouin as pg
 import pickle as pkl
+import statsmodels.api as sm
+from statsmodels.formula.api import ols
 
-dir_countings = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-01a02 - cFos/microscope/pagm/results/'
-dir_supervised = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-01a02 - cFos/'
-dir_correspondence = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-01a02 - cFos/microscope/'
-brain_area = 'pagm'
+dir_countings = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-02a04_TRAP2females/microscopi_batch3/'
+dir_supervised = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-02a04_TRAP2females/behavior/combined/'
+dir_correspondence = '//folder/becell/Lab Projects/ERCstG_HighMemory/Data/Marc/1) SOC/2024-02a04_TRAP2females/'
+
+correspondence_tag = 'correspondence_tone.csv'
+brain_area = 'vlpag'
+values_column = 'engrams_mm'
+# values_column = 'cells_per_squared_mm'
+# values_column = 'ratio'
+
 
 # Import countings
 df = pd.DataFrame()
@@ -25,12 +33,12 @@ for file in os.listdir(dir_countings):
         df = pd.concat([df, df2], ignore_index=True)
 
 # Import supervised
-with open(dir_supervised + 'supervised_annotation.pkl', 'rb') as file:
+with open(dir_supervised + 'supervised_annotation_abc.pkl', 'rb') as file:
     supervised_annotation = pkl.load(file)
 
 # Import conditions
 for file in os.listdir(dir_correspondence):
-    if file.endswith('correspondence.csv'):
+    if file.endswith(correspondence_tag):
         file_path = os.path.join(dir_correspondence, file)
         correspondence = pd.read_csv(file_path)
 
@@ -125,32 +133,42 @@ def boxplot(df, brain_area, behavior='huddle', ax=None):
     mean_values['di'] = (mean_values.behavior_4 - mean_values.behavior_3) / (mean_values.behavior_4 + mean_values.behavior_3)
     
     # Calculate cFos
+    dataframes_for_stats = []
     for group in groups:
         data_position = groups.index(group)
         positions.append(data_position)
         data = df2[df2['group'] == group]
-        data, outliers = remove_outliers(data, 'cells_per_squared_mm')
-        print('Outliers found: ' + outliers)
+        # data, outliers = remove_outliers(data, values_column)
+        # print('Outliers found: ' + outliers)
         
         # Combine behavior and cFos
-        data = pd.DataFrame(data.groupby('animal')['cells_per_squared_mm'].mean())
+        data = pd.DataFrame(data.groupby('animal')[values_column].mean())
+        
+        # data = pd.DataFrame(data.groupby('animal')[['engrams_mm', 'cells_per_squared_mm']].mean())
+        # data[values_column] = data['engrams_mm'] / data['cells_per_squared_mm']
+        
         data.reset_index(inplace=True)
-        data = pd.merge(data, correspondence, on='animal', how='inner')
+        data = pd.merge(data, correspondence, on='animal', how='left')
         combined_df = pd.merge(data, mean_values, left_on='video', right_on='level_0', how='inner')
+        
+        # Data for stats
+        data_stats = combined_df[['animal', values_column]]
+        data_stats['group'] = group
+        dataframes_for_stats.append(data_stats)
         
         # Set colors
         bins = [-1, -0.25, 0, 0.25, 1]
         colors = ['#cb181d', '#fc9272', '#9ecae1', '#2171b5']
         combined_df['colors'] = pd.cut(combined_df.di, bins, labels=colors, include_lowest=True)
         
-        data_mean = np.mean(combined_df.cells_per_squared_mm)
-        data_error = np.std(combined_df.cells_per_squared_mm, ddof=1)
+        data_mean = np.mean(combined_df[values_column])
+        data_error = np.std(combined_df[values_column], ddof=1)
         
         ax.hlines(data_mean, xmin=data_position-0.25, xmax=data_position+0.25, color='#636466', linewidth=1.5)
         ax.errorbar(data_position, data_mean, yerr=data_error, lolims=False, capsize = 3, ls='None', color='#636466', zorder=-1)
         
         dispersion_values_data = np.random.normal(loc=data_position, scale=jitter, size=len(combined_df)).tolist()
-        plot_dict = dict(zip(combined_df.animal, zip(combined_df.cells_per_squared_mm, dispersion_values_data, combined_df.colors)))
+        plot_dict = dict(zip(combined_df.animal, zip(combined_df[values_column], dispersion_values_data, combined_df.colors)))
         
         for value in plot_dict.values():
             ax.plot(value[1], value[0],
@@ -164,7 +182,9 @@ def boxplot(df, brain_area, behavior='huddle', ax=None):
 
     ax.set_xticks(positions)
     ax.set_xticklabels(groups)
-    
+    ax.set_xlabel('')
+    ax.set_ylabel('+cells/mm^2', loc='top')
+
     # if len(data1) == len(data2):
     #     for x in range(len(data1)):
     #         ax.plot([dispersion_values_data1[x], dispersion_values_data2[x]], [data1[x], data2[x]], color = '#636466', linestyle='--', linewidth=0.5)
@@ -174,24 +194,70 @@ def boxplot(df, brain_area, behavior='huddle', ax=None):
     # sd = np.std(combined_df.cells_per_squared_mm)
     # ax.set_ylim(min_value - 2*sd, max_value + 2*sd)
     
-    ax.set_xlabel('')
-    ax.set_ylabel('cFos+/mm^2', loc='top')    
-
-    
-    # pvalue = pg.ttest(data1, data2, paired=True)['p-val'][0]
-
-    # y, h, col = max(max(data1), max(data2)) + 5, 2, 'grey'
-    
-    # ax.plot([data1_position, data1_position, data2_position, data2_position], [y, y+h, y+h, y], lw=1.5, c=col)
-    
-    # if pvalue > 0.05:
-    #     ax.text((data1_position+data2_position)*.5, y+2*h, convert_pvalue_to_asterisks(pvalue), ha='center', va='bottom', color=col, size=11)
-    # elif pvalue <= 0.05:    
-    #     ax.text((data1_position+data2_position)*.5, y, convert_pvalue_to_asterisks(pvalue), ha='center', va='bottom', color=col, size=18)
-    
+    stats_df = pd.concat(dataframes_for_stats, ignore_index=True)
+        
     plt.tight_layout()
-    return ax
+    return ax, stats_df
+
+ax, stats_df = boxplot(df, brain_area)
+# stats_df['batch'] = 'b'
+# stats_df.loc[stats_df['animal'] > 100, 'batch'] = 'a'
+
+# Test normality
+# pg.normality(stats_df, dv=values_column, group='group')
+# pg.normality(stats_df, dv=values_column, group='batch')
+
+# Test equal variances
+# pg.homoscedasticity(stats_df, dv=values_column, group='group')
+# pg.homoscedasticity(stats_df, dv=values_column, group='batch')
+
+# ttest
+# pg.ttest(stats_df[stats_df.group == 'paired'][values_column],
+#          stats_df[stats_df.group == 'unpaired'][values_column])['p-val']
+
+# RCBD
+# model = ols(values_column + ' ~ C(group) + C(batch)', data=stats_df).fit()
+# sm.stats.anova_lm(model, typ=2)
+
+# Perform ANOVA
+# pg.anova(stats_df, dv=values_column, between=['group', 'batch'])
+# pg.anova(stats_df, dv=values_column, between='group')
+
+# Perform post-hoc
+# pg.pairwise_tukey(stats_df, dv=values_column, between='group')
+
+# Non-parametric
+# pg.kruskal(stats_df, dv=values_column, between='group')
 
 
-boxplot(df, brain_area)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
