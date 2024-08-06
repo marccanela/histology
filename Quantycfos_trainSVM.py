@@ -272,7 +272,7 @@ df['hog_std'] = df['hog_std'].astype(float)
 
 df.to_csv(f"{test_folder}/df_3.csv", index=False)
 
-df = pd.read_csv(f"{test_folder}/df_3.csv")
+df = pd.read_csv(f"{test_folder}/tdt_training_results/df_3.csv")
 
 from sklearn.model_selection import train_test_split
 
@@ -374,6 +374,49 @@ import pickle
 with open(f"{test_folder}/best_model_rf.pkl", 'wb') as file:
     pickle.dump(best_model, file)
 with open(f"{test_folder}/best_model_rf.pkl", 'rb') as file:
+    best_model = pickle.load(file)
+
+# =============================================================================
+# Logistic regression
+# =============================================================================
+
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import uniform
+
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('pca', PCA(random_state=42)),
+    ('log_reg', LogisticRegression(random_state=42)),
+        ])
+
+param_dist = {
+    'pca__n_components': uniform(0.5, 0.5),
+    'log_reg__C': uniform(1, 100),
+}
+
+random_search = RandomizedSearchCV(pipeline,
+                                   param_dist,
+                                   n_iter=100,
+                                   cv=5,
+                                   random_state=42,
+                                   n_jobs=-1)
+
+random_search.fit(X_train, y_train)
+
+print("Best parameters found: ", random_search.best_params_)
+print("Best cross-validation score: ", random_search.best_score_)
+
+# Best model from RandomizedSearchCV
+best_model = random_search.best_estimator_
+
+import pickle
+with open(f"{test_folder}/best_model_logreg.pkl", 'wb') as file:
+    pickle.dump(best_model, file)
+with open(f"{test_folder}/best_model_logreg.pkl", 'rb') as file:
     best_model = pickle.load(file)
 
 # =============================================================================
